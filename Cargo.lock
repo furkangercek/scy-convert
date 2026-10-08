@@ -6314,7 +6314,7 @@ dependencies = [
 
 [[package]]
 name = "scyconvert-app"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "dirs 6.0.0",
  "futures",
@@ -6338,7 +6338,7 @@ dependencies = [
 
 [[package]]
 name = "scyconvert-cli"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -6354,7 +6354,7 @@ dependencies = [
 
 [[package]]
 name = "scyconvert-core"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "serde",
  "tempfile",
@@ -6365,7 +6365,7 @@ dependencies = [
 
 [[package]]
 name = "scyconvert-engines"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "anyhow",
  "dirs 6.0.0",
@@ -6390,7 +6390,7 @@ dependencies = [
 
 [[package]]
 name = "scyconvert-shell"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "serde",
  "serde_json",
