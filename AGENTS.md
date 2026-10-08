@@ -30,6 +30,7 @@ cargo clippy -p scyconvert-app --all-targets -- -D warnings
 ## Conventions
 
 - Video and audio options are fields of `Options`; their value types live in `scyconvert-core/src/media.rs`. `scyconvert-engines/src/ffmpeg_args.rs` turns them into FFmpeg arguments and decides which codecs each container takes. The app's "More options" sections are the table in `scyconvert-app/src/ui/advanced.rs`; a new option is one entry there plus a CLI flag.
+- One-click actions (Compress, Make mono, Remove audio...) live in `scyconvert-core/src/actions.rs`: each picks a target, options and an output suffix for the file at hand. The CLI (`--action`), the right-click menu and Quick convert all use it. A file can become its own format only through an engine's direct `from == to` step.
 - Adding a conversion means declaring `steps()` on an engine; the registry finds chains. Give a native or hardware path a higher `priority()` than the fallback.
 - Engines that shell out find their tool via `SCYCONVERT_<TOOL>`, then next to the executable, then `PATH`. LibreOffice is also found in Program Files (Windows) and `/Applications` (macOS).
 - Multi-hop routes may not turn a still format into video or audio; only a direct step can.

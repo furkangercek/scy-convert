@@ -2,6 +2,7 @@
 //! them, and how to chain engines when no single one covers a conversion.
 //! It has no native dependencies; the engines live in `scyconvert-engines`.
 
+pub mod actions;
 mod batch;
 mod engine;
 mod error;
@@ -11,6 +12,7 @@ mod options;
 mod publish;
 mod registry;
 
+pub use actions::{ACTION_IDS, ActionMenu, ActionPlan};
 pub use batch::{BatchItem, Event, expand_inputs, run_batch};
 pub use engine::{Cancel, Ctx, Engine, Progress, Step};
 pub use error::{Error, Result, stderr_tail};
@@ -19,4 +21,4 @@ pub use options::{
     Aspect, AudioCodec, Background, Channels, EncoderSpeed, Flip, FrameRate, Hardware, Options,
     PageRange, Preset, Rotation, SAMPLE_RATES, Timestamp, VideoCodec,
 };
-pub use registry::{Job, Output, Plan, Registry};
+pub use registry::{Job, Output, Plan, Registry, menu_rank};

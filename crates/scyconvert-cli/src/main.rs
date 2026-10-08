@@ -33,6 +33,11 @@ struct Cli {
     /// A preset name from `scyconvert presets`, or a path to a preset file
     #[arg(short, long)]
     preset: Option<String>,
+    /// A one-click action instead of --to: compress-half, compress-third,
+    /// compress-smallest (video); compress-192, compress-128, compress-64
+    /// (audio); extract-audio, mute, mono, stereo, normalize
+    #[arg(short, long, conflicts_with = "to")]
+    action: Option<String>,
     /// Lossy quality from 1 to 100 (JPEG, HEIC, AVIF, video)
     #[arg(short, long)]
     quality: Option<u8>,
@@ -86,6 +91,10 @@ struct MediaArgs {
     /// Target video bitrate in kbit/s, instead of --quality
     #[arg(long, value_name = "KBPS")]
     video_bitrate: Option<u32>,
+    /// Aim for this share of the input's size, 5 to 95 percent; a result
+    /// that isn't smaller is not kept
+    #[arg(long, value_name = "PERCENT")]
+    target_size: Option<u8>,
     /// Output frame rate, e.g. 30 or 29.97
     #[arg(long)]
     fps: Option<FrameRate>,
@@ -162,7 +171,9 @@ enum Cmd {
     /// List the formats a file can be converted to
     Targets {
         file: PathBuf,
-        /// Only the few popular targets right-click menus offer
+        /// What right-click menus offer, one tab-separated line each: `menu
+        /// <id> <title>` starts a submenu, which holds `heading <text>`,
+        /// `format <id> <name>`, `action <id> <label>` and `separator`
         #[arg(long)]
         menu: bool,
     },
@@ -315,13 +326,12 @@ fn main() -> anyhow::Result<()> {
         Some(Cmd::Targets { file, menu }) => {
             let from = format_by_extension(&file)
                 .with_context(|| format!("unknown format: {}", file.display()))?;
-            let targets = if menu {
-                registry.menu_targets(from)
+            if menu {
+                print_menu(&registry, from);
             } else {
-                registry.targets(from)
-            };
-            for f in targets {
-                println!("{}", f.id);
+                for f in registry.targets(from) {
+                    println!("{}", f.id);
+                }
             }
         }
         Some(Cmd::Engines) => {
@@ -354,16 +364,34 @@ fn main() -> anyhow::Result<()> {
 
 fn convert(cli: Cli, registry: &scyconvert_core::Registry) -> anyhow::Result<()> {
     let preset = cli.preset.as_deref().map(load_preset).transpose()?;
-    let Some(to) = cli
+    let action = cli
+        .action
+        .as_deref()
+        .map(|id| {
+            scyconvert_core::ACTION_IDS
+                .iter()
+                .copied()
+                .find(|a| *a == id)
+                .with_context(|| {
+                    format!(
+                        "unknown action {id:?}; use {}",
+                        scyconvert_core::ACTION_IDS.join(", ")
+                    )
+                })
+        })
+        .transpose()?;
+    let to = match cli
         .to
+        .clone()
         .or_else(|| preset.as_ref().and_then(|p| p.to.clone()))
-    else {
-        bail!("pass --to <format>, or see `scyconvert --help`")
+    {
+        Some(to) => Some(format_by_id(&to).with_context(|| format!("unknown format: {to}"))?),
+        None if action.is_some() => None,
+        None => bail!("pass --to <format> or --action <name>, or see `scyconvert --help`"),
     };
     if cli.files.is_empty() {
         bail!("no input files");
     }
-    let to = format_by_id(&to).with_context(|| format!("unknown format: {to}"))?;
     let options = Options {
         quality: cli.quality,
         max_size: cli.max_size,
@@ -377,6 +405,8 @@ fn convert(cli: Cli, registry: &scyconvert_core::Registry) -> anyhow::Result<()>
         hardware: cli.media.hardware,
         encoder_speed: cli.media.encoder_speed,
         video_bitrate: cli.media.video_bitrate,
+        size_percent: cli.media.target_size,
+        shrink_only: cli.media.target_size.is_some(),
         fps: cli.media.fps,
         ten_bit: cli.media.ten_bit,
         crop: cli.media.crop,
@@ -401,7 +431,8 @@ fn convert(cli: Cli, registry: &scyconvert_core::Registry) -> anyhow::Result<()>
     }
     .or(&preset.map(|p| p.options).unwrap_or_default());
     options.validate()?;
-    if options.background == Some(Background::Transparent)
+    if let Some(to) = to
+        && options.background == Some(Background::Transparent)
         && to.category == Category::Image
         && !to.keeps_transparency()
     {
@@ -413,14 +444,33 @@ fn convert(cli: Cli, registry: &scyconvert_core::Registry) -> anyhow::Result<()>
 
     // Files found in a folder are skipped quietly when they can't become `to`;
     // files named directly are always attempted, so their errors show.
+    // An action picks each file's target and options; flags still win.
+    let planned = |item: &scyconvert_core::BatchItem| {
+        let from = format_by_extension(&item.input)?;
+        match action {
+            Some(action) => scyconvert_core::actions::plan(action, from)
+                .map(|p| (p.to, p.options, p.suffix))
+                .filter(|(to, ..)| registry.plan(from, to).is_ok()),
+            None => to
+                .filter(|to| *to != from && registry.plan(from, to).is_ok())
+                .map(|to| (to, Options::default(), None)),
+        }
+    };
     let jobs: Vec<Job> = expand_inputs(&cli.files, cli.recursive)?
         .into_iter()
-        .filter(|item| {
-            item.explicit
-                || format_by_extension(&item.input)
-                    .is_some_and(|from| from != to && registry.plan(from, to).is_ok())
-        })
+        .filter(|item| item.explicit || planned(item).is_some())
         .map(|item| {
+            let (job_to, job_options, suffix) = match (planned(&item), to) {
+                (Some(plan), _) => plan,
+                // Named files that can't be converted still run, so their
+                // error shows.
+                (None, Some(to)) => (to, Options::default(), None),
+                (None, None) => bail!(
+                    "{} can't do {}",
+                    item.input.display(),
+                    action.unwrap_or("that")
+                ),
+            };
             // With -o, files found in subfolders keep their relative folder so
             // same-named files from different folders don't collide.
             let output = match &cli.out_dir {
@@ -430,17 +480,26 @@ fn convert(cli: Cli, registry: &scyconvert_core::Registry) -> anyhow::Result<()>
                         .with_context(|| format!("creating {}", dir.display()))?;
                     Output::Dir(dir)
                 }
-                None => Output::Beside,
+                None => match suffix {
+                    Some(suffix) => Output::Suffixed(suffix.into()),
+                    None => Output::Beside,
+                },
             };
             Ok(Job {
-                options: options.clone(),
+                options: options.clone().or(&job_options),
                 output,
-                ..Job::new(item.input, to)
+                ..Job::new(item.input, job_to)
             })
         })
         .collect::<anyhow::Result<_>>()?;
     if jobs.is_empty() {
-        bail!("nothing in those folders converts to {}", to.id);
+        match (to, action) {
+            (Some(to), _) => bail!("nothing in those folders converts to {}", to.id),
+            (None, action) => bail!(
+                "nothing in those folders can {}",
+                action.unwrap_or("convert")
+            ),
+        }
     }
 
     let cancel = Cancel::new();
@@ -573,4 +632,59 @@ fn emit(value: serde_json::Value) {
     let mut out = std::io::stdout().lock();
     let _ = writeln!(out, "{value}");
     let _ = out.flush();
+}
+
+/// The right-click menus for a file of `from`: "Convert with scyconvert"
+/// with its targets by kind, then a submenu per kind of action. Windows 11
+/// shows one level of submenu, so kinds are headings, not submenus.
+fn print_menu(registry: &scyconvert_core::Registry, from: &'static scyconvert_core::Format) {
+    let groups = registry.menu_groups(from);
+    if !groups.is_empty() {
+        println!("menu\tconvert\tConvert with scyconvert");
+        let moving = from.category == Category::Video;
+        for (i, (kind, formats)) in groups.iter().enumerate() {
+            if i > 0 {
+                println!("separator");
+            }
+            if groups.len() > 1 {
+                let heading = match kind {
+                    Category::Audio if moving => "Audio only",
+                    Category::Image | Category::Vector if moving => "Still frame",
+                    kind => group_name(*kind),
+                };
+                println!("heading\t{heading}");
+            }
+            for f in formats {
+                println!("format\t{}\t{}", f.id, f.name);
+            }
+        }
+    }
+    let actions = scyconvert_core::actions::available(registry, from);
+    for menu in scyconvert_core::ActionMenu::ALL {
+        let mine: Vec<_> = actions.iter().filter(|(_, p)| p.menu == menu).collect();
+        if mine.is_empty() {
+            continue;
+        }
+        let title = match menu {
+            scyconvert_core::ActionMenu::Compress => "Compress with scyconvert",
+            scyconvert_core::ActionMenu::Audio => "Adjust audio with scyconvert",
+        };
+        println!("menu\t{}\t{title}", menu.id());
+        for (id, plan) in mine {
+            println!("action\t{id}\t{}", plan.label);
+        }
+    }
+}
+
+/// The name of a right-click submenu for targets of `kind`.
+fn group_name(kind: Category) -> &'static str {
+    match kind {
+        Category::Image | Category::Vector => "Image",
+        Category::Video => "Video",
+        Category::Audio => "Audio",
+        Category::Pdf => "PDF",
+        Category::Document => "Document",
+        Category::Presentation => "Presentation",
+        Category::Spreadsheet => "Spreadsheet",
+    }
 }

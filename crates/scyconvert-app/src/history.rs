@@ -38,6 +38,7 @@ enum StoredOutput {
     Beside,
     Dir(Vec<u8>),
     Exact(Vec<u8>),
+    Suffixed(String),
 }
 
 impl Setup {
@@ -46,6 +47,7 @@ impl Setup {
             Output::Beside => StoredOutput::Beside,
             Output::Dir(dir) => StoredOutput::Dir(path_bytes(dir)),
             Output::Exact(path) => StoredOutput::Exact(path_bytes(path)),
+            Output::Suffixed(suffix) => StoredOutput::Suffixed(suffix.clone()),
         };
         let stored = StoredSetup {
             options: self.options.clone(),
@@ -60,6 +62,7 @@ impl Setup {
             StoredOutput::Beside => Output::Beside,
             StoredOutput::Dir(dir) => Output::Dir(path_from_bytes(dir)),
             StoredOutput::Exact(path) => Output::Exact(path_from_bytes(path)),
+            StoredOutput::Suffixed(suffix) => Output::Suffixed(suffix),
         };
         Some(Self {
             options: stored.options,

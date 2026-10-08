@@ -3,15 +3,19 @@ use std::process::Command;
 
 use scyconvert_core::{Background, Ctx, Engine, Error, Result, Step};
 
-use crate::ffmpeg_args::{ffmpeg_args, output_secs};
+use crate::ffmpeg_args::{ffmpeg_args, output_secs, with_size_target};
 
-const VIDEO_IN: &[&str] = &["mp4", "mov", "webm", "mkv", "avi", "gif"];
-const VIDEO_OUT: &[&str] = &["mp4", "mov", "webm", "mkv", "avi", "gif"];
+const VIDEO_IN: &[&str] = &[
+    "mp4", "mov", "webm", "mkv", "avi", "wmv", "flv", "mpeg", "m2ts", "3gp", "ogv", "gif",
+];
+const VIDEO_OUT: &[&str] = VIDEO_IN;
 /// Video to image grabs the first frame. WebP goes through PNG and the
 /// `image` engine: FFmpeg has no WebP encoder of its own, and the bundled
 /// builds leave out libwebp.
 const FRAME: &[&str] = &["png", "jpeg"];
-const AUDIO: &[&str] = &["mp3", "wav", "flac", "aac", "m4a", "ogg", "opus"];
+const AUDIO: &[&str] = &[
+    "mp3", "wav", "flac", "aac", "m4a", "ogg", "opus", "wma", "aiff", "ac3",
+];
 
 /// The FFmpeg binary the engine would run, found the way every tool is:
 /// `SCYCONVERT_FFMPEG`, next to the executable, then `PATH`. The desktop app uses
@@ -26,7 +30,7 @@ pub const LOCAL_INPUT_ARGS: &[&str] = &[
     "-protocol_whitelist",
     "file,pipe",
     "-format_whitelist",
-    "mov,mp4,m4a,3gp,3g2,mj2,matroska,webm,avi,gif,mp3,wav,flac,aac,ogg",
+    "mov,mp4,m4a,3gp,3g2,mj2,matroska,webm,avi,gif,mp3,wav,flac,aac,ogg,asf,flv,mpeg,mpegts,aiff,ac3",
 ];
 
 fn local_path(path: &Path) -> std::ffi::OsString {
@@ -169,6 +173,15 @@ impl Engine for FfmpegEngine {
             // GIF has no audio stream, so extraction is never meaningful.
             .filter(|step| !(step.from.id == "gif" && AUDIO.contains(&step.to.id)))
             .chain(crate::steps(AUDIO, AUDIO))
+            // A file can become its own format again: compressed, made mono.
+            .chain(
+                VIDEO_IN
+                    .iter()
+                    .filter(|id| **id != "gif")
+                    .chain(AUDIO)
+                    .filter_map(|id| scyconvert_core::format_by_id(id))
+                    .map(|f| Step { from: f, to: f }),
+            )
             .collect()
     }
 
@@ -182,11 +195,9 @@ impl Engine for FfmpegEngine {
             .filter(|t| *t > 0.0)
             .map(|us| us / 1_000_000.0);
         let to = ctx.step.to.id;
-        let args = ffmpeg_args(
-            if to == "jpeg" { "png" } else { to },
-            ctx.options,
-            input_secs,
-        )?;
+        let input_bytes = std::fs::metadata(input).ok().map(|m| m.len());
+        let options = with_size_target(to, ctx.options, input_secs, input_bytes)?;
+        let args = ffmpeg_args(if to == "jpeg" { "png" } else { to }, &options, input_secs)?;
         // Progress follows the output's timeline: trimmed, at the new speed.
         let total = output_secs(ctx.options, input_secs)
             .filter(|t| *t > 0.0)
@@ -234,6 +245,13 @@ impl Engine for FfmpegEngine {
             crate::image::encode_with_pixel_aspect(img, to, ctx.options, &output, pixel_aspect)?;
         } else if to == "png" {
             crate::image::background_png(&output, ctx.options)?;
+        }
+        if ctx.options.shrink_only
+            && let (Some(before), Ok(after)) = (input_bytes, std::fs::metadata(&output))
+            && after.len() >= before
+        {
+            let _ = std::fs::remove_file(&output);
+            return Err(Error::NotSmaller);
         }
         Ok(vec![output])
     }
@@ -578,6 +596,27 @@ mod tests {
             if codec == VideoCodec::Av1 {
                 assert_eq!(value(&p, "pix_fmt"), "yuv420p10le", "{p:?}");
             }
+        }
+    }
+
+    #[test]
+    fn real_ffmpeg_writes_every_new_format() {
+        for (to, first_codec) in [
+            ("wmv", "wmv2"),
+            ("flv", "h264"),
+            ("mpeg", "mpeg2video"),
+            ("m2ts", "h264"),
+            ("3gp", "h264"),
+            ("ogv", "theora"),
+            ("wma", "wmav2"),
+            ("aiff", "pcm_s16be"),
+            ("ac3", "ac3"),
+        ] {
+            let Some((_dir, output)) = convert_clip(to, &Options::default()) else {
+                return;
+            };
+            let Some(p) = probe(&output) else { return };
+            assert_eq!(value(&p, "codec_name"), first_codec, "{to}: {p:?}");
         }
     }
 

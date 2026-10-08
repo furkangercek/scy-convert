@@ -131,6 +131,12 @@ fn run(primary: instance::Primary, first: Request) {
         macos::init(&state, tx.clone(), cx);
         cx.set_global(Shared(state.clone()));
         tray::install(cx);
+        // A finished conversion's notification shows its file when clicked.
+        cx.on_system_notification_response(|_, cx| {
+            if let Some(path) = model::shared(cx).read(cx).notified.clone() {
+                cx.reveal_path(&path);
+            }
+        });
         cx.on_window_closed(last_window_closed).detach();
 
         primary.listen(move |req| drop(tx.unbounded_send(req)));

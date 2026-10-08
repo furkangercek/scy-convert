@@ -24,7 +24,13 @@ pub struct Request {
     #[serde(default)]
     pub show_progress: bool,
     pub to: Option<String>,
+    /// A one-click action from the right-click menu: `compress`, `mono`.
+    #[serde(default)]
+    pub action: Option<String>,
     pub preset: Option<String>,
+    /// Explorer asks for a notification when no window shows progress.
+    #[serde(default)]
+    pub notify: bool,
     pub source: Option<Source>,
     /// Started at sign-in: open the main window minimized.
     #[serde(default)]
@@ -38,7 +44,7 @@ impl Request {
     /// if the preset has no target or a file can't be converted.
     pub fn auto_start(&self) -> bool {
         self.source == Some(Source::Cli)
-            && (self.to.is_some() || self.preset.is_some())
+            && (self.to.is_some() || self.preset.is_some() || self.action.is_some())
             && !self.files.is_empty()
     }
 }
@@ -46,7 +52,7 @@ impl Request {
 pub const USAGE: &str = "\
 usage: scyconvert-app [files...]
        scyconvert-app --minimized
-       scyconvert-app open [--to <format>] [--preset <name>] [--] <files...>
+       scyconvert-app open [--to <format> | --action <name>] [--preset <name>] [--] <files...>
        scyconvert-app 'scyconvert://convert?file=<path>&to=<format>&preset=<name>'
 
 Opens the scyconvert window. With --to, or a preset that names a format, the
@@ -100,6 +106,7 @@ pub fn parse_args(args: Vec<OsString>, cwd: &Path) -> Result<Command, String> {
             Some(crate::login::ARG) => req.minimized = true,
             Some("--to") => req.to = Some(value("--to")?),
             Some("--preset") => req.preset = Some(value("--preset")?),
+            Some("--action") => req.action = Some(value("--action")?),
             Some(f) if f.starts_with("--to=") => req.to = Some(f[5..].into()),
             Some(f) if f.starts_with("--preset=") => req.preset = Some(f[9..].into()),
             Some(f) if f.starts_with('-') && f.len() > 1 => {

@@ -45,11 +45,27 @@ impl Paths {
 }
 
 /// Finished jobs since the queue was last idle, for the summary notification.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Batch {
     pub done: usize,
     pub failed: usize,
     pub cancelled: usize,
+    /// The first output of the last job that finished, and its input.
+    pub last: Option<PathBuf>,
+    pub last_input: Option<PathBuf>,
+    /// Why the last failed job failed.
+    pub last_error: Option<String>,
+}
+
+/// What a finished job does to tell the user.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Feedback {
+    /// Counts toward the summary notification, and may reveal its file.
+    Normal,
+    /// A notification but no reveal: a conversion from the right-click menu.
+    Notify,
+    /// Neither: a conversion started from the command line.
+    Quiet,
 }
 
 impl Batch {
@@ -65,10 +81,24 @@ impl Batch {
         };
         match (self.done, self.failed) {
             (0, 0) => None,
+            (1, 0) if let Some(last) = &self.last => Some((
+                "Conversion finished".into(),
+                format!(
+                    "Saved {}{}",
+                    file_name(last),
+                    self.last_input
+                        .as_deref()
+                        .map(|input| size_change(input, last))
+                        .unwrap_or_default()
+                ),
+            )),
             (done, 0) => Some((
                 "Conversion finished".into(),
                 format!("Converted {}.", files(done)),
             )),
+            (0, 1) if let Some(why) = &self.last_error => {
+                Some(("Conversion failed".into(), capitalized(why)))
+            }
             (0, failed) => Some((
                 "Conversion failed".into(),
                 format!("{} could not be converted.", files(failed)),
@@ -222,10 +252,13 @@ pub struct AppState {
     /// Problems loading or saving app files, shown in the Settings tab.
     pub errors: Vec<String>,
     batch: Batch,
-    /// Jobs from silent conversions (a target picked in a background menu).
-    /// Explorer requests that ask to show progress are tracked like normal
-    /// batches so the Activity window gets a summary and reveal behavior.
+    /// Jobs whose output is never revealed: conversions from a menu or the
+    /// command line, which open no window.
     silent: HashSet<JobId>,
+    /// Jobs left out of the summary notification.
+    unannounced: HashSet<JobId>,
+    /// The file the last notification was about, revealed when it's clicked.
+    pub notified: Option<PathBuf>,
     /// What [`Self::apply`] would have revealed, in tests.
     #[cfg(test)]
     pub revealed: Vec<PathBuf>,
@@ -303,6 +336,8 @@ impl AppState {
             errors,
             batch: Batch::default(),
             silent: HashSet::new(),
+            unannounced: HashSet::new(),
+            notified: None,
             #[cfg(test)]
             revealed: Vec::new(),
             quit_when_idle: false,
@@ -351,7 +386,7 @@ impl AppState {
         output: Output,
         cx: &mut Context<Self>,
     ) -> Result<Vec<JobId>, String> {
-        self.queue_jobs(files, to, options, output, false, cx)
+        self.queue_jobs(files, to, options, output, Feedback::Normal, cx)
     }
 
     fn queue_jobs(
@@ -360,7 +395,7 @@ impl AppState {
         to: &'static Format,
         options: &Options,
         output: Output,
-        silent: bool,
+        feedback: Feedback,
         cx: &mut Context<Self>,
     ) -> Result<Vec<JobId>, String> {
         if let Some(reason) = self.documents_locked()
@@ -383,8 +418,11 @@ impl AppState {
                     output: output.clone(),
                 };
                 let id = self.queue.add(&job);
-                if silent {
+                if feedback != Feedback::Normal {
                     self.silent.insert(id);
+                }
+                if feedback == Feedback::Quiet {
+                    self.unannounced.insert(id);
                 }
                 self.runner.submit(id, job);
                 id
@@ -452,32 +490,102 @@ impl AppState {
         if let Some(e) = expanded.unreadable.first() {
             return Err(e.clone());
         }
-        let targets = common_targets(&self.registry, &expanded.files);
-        let (to, options) = resolve(self, request.to.as_deref(), request.preset.as_deref())?;
-        let to = to.ok_or("The preset doesn't name a format.")?;
-        if expanded.files.is_empty()
-            || !targets.unsupported.is_empty()
-            || !targets.formats.contains(&to)
-        {
-            return Err(format!(
-                "Not every file can become {}.",
-                to.extension().to_uppercase()
-            ));
+        if expanded.files.is_empty() {
+            return Err("There are no files to convert here.".into());
         }
+        let feedback = if request.show_progress {
+            Feedback::Normal
+        } else if request.notify {
+            Feedback::Notify
+        } else {
+            Feedback::Quiet
+        };
         // "In place" means next to the original, whatever Settings says.
-        let ids = self.queue_jobs(
-            &expanded.files,
-            to,
-            &options,
-            Output::Beside,
-            !request.show_progress,
-            cx,
-        )?;
+        let ids = match request.action.as_deref() {
+            Some(action) => self.queue_action(&expanded.files, action, None, feedback, cx)?,
+            None => {
+                let targets = common_targets(&self.registry, &expanded.files);
+                let (to, options) =
+                    resolve(self, request.to.as_deref(), request.preset.as_deref())?;
+                let to = to.ok_or("The preset doesn't name a format.")?;
+                if !targets.unsupported.is_empty() || !targets.formats.contains(&to) {
+                    return Err(format!(
+                        "Not every file can become {}.",
+                        to.extension().to_uppercase()
+                    ));
+                }
+                self.queue_jobs(&expanded.files, to, &options, Output::Beside, feedback, cx)?
+            }
+        };
         if cx.windows().is_empty() {
             // Nothing else keeps the app open, so quit once the files are done.
             self.quit_when_idle = true;
         }
         Ok(ids)
+    }
+
+    /// Runs a one-click action on each file, with that file's own target and
+    /// options: a compressed MKV stays an MKV. Output goes next to each file
+    /// as `name-compressed.mkv`, or into `dir`.
+    pub fn queue_action(
+        &mut self,
+        files: &[PathBuf],
+        action: &str,
+        dir: Option<&Path>,
+        feedback: Feedback,
+        cx: &mut Context<Self>,
+    ) -> Result<Vec<JobId>, String> {
+        let plans = files
+            .iter()
+            .map(|file| {
+                let plan = format_by_extension(file)
+                    .and_then(|from| {
+                        scyconvert_core::actions::plan(action, from)
+                            .filter(|p| self.registry.plan(from, p.to).is_ok())
+                    })
+                    .ok_or_else(|| format!("{} can't do that.", file_name(file)))?;
+                Ok((file.clone(), plan))
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        let mut ids = Vec::new();
+        for (file, plan) in plans {
+            let output = match (dir, plan.suffix) {
+                (Some(dir), _) => Output::Dir(dir.to_path_buf()),
+                (None, Some(suffix)) => Output::Suffixed(suffix.into()),
+                (None, None) => Output::Beside,
+            };
+            ids.extend(self.queue_jobs(
+                std::slice::from_ref(&file),
+                plan.to,
+                &plan.options,
+                output,
+                feedback,
+                cx,
+            )?);
+        }
+        Ok(ids)
+    }
+
+    /// The actions every file in `files` can take, in menu order, with what
+    /// each does to the first file.
+    pub fn common_actions(
+        &self,
+        files: &[PathBuf],
+    ) -> Vec<(&'static str, scyconvert_core::ActionPlan)> {
+        let Some(first) = files.first().and_then(|f| format_by_extension(f)) else {
+            return Vec::new();
+        };
+        scyconvert_core::actions::available(&self.registry, first)
+            .into_iter()
+            .filter(|(id, _)| {
+                files.iter().all(|f| {
+                    format_by_extension(f).is_some_and(|from| {
+                        scyconvert_core::actions::plan(id, from)
+                            .is_some_and(|p| self.registry.plan(from, p.to).is_ok())
+                    })
+                })
+            })
+            .collect()
     }
 
     /// Runs a finished conversion again with the same input, target, options
@@ -744,10 +852,11 @@ impl AppState {
 
     fn apply(&mut self, update: crate::jobs::Update, cx: &mut Context<Self>) {
         if let Some(entry) = self.queue.apply(update).cloned() {
-            // Silent jobs stay out of the batch summary and are never revealed.
+            // Silent jobs are never revealed; unannounced ones stay out of
+            // the summary notification too.
             let silent = self.silent.remove(&entry.id);
             let mut ignored = Batch::default();
-            let batch = if silent {
+            let batch = if self.unannounced.remove(&entry.id) {
                 &mut ignored
             } else {
                 &mut self.batch
@@ -755,6 +864,8 @@ impl AppState {
             let outcome = match &entry.status {
                 Status::Done(outputs) => {
                     batch.done += 1;
+                    batch.last = outputs.first().cloned();
+                    batch.last_input = Some(entry.input.clone());
                     if self.automation_copies.remove(&entry.id) {
                         cx.write_to_clipboard(crate::clipboard::clipboard_item(outputs));
                     }
@@ -773,6 +884,7 @@ impl AppState {
                 Status::Failed(e) => {
                     self.automation_copies.remove(&entry.id);
                     batch.failed += 1;
+                    batch.last_error = Some(e.message.clone());
                     Outcome::Failed(e.message.clone())
                 }
                 _ => {
@@ -801,6 +913,10 @@ impl AppState {
             && in_background
             && let Some((title, body)) = batch.summary()
         {
+            // Clicking the notification shows the file, when there is one.
+            self.notified = (batch.done == 1 && batch.failed == 0)
+                .then(|| batch.last.clone())
+                .flatten();
             cx.show_system_notification(SystemNotification {
                 tag: "scyconvert-batch".into(),
                 title: title.into(),
@@ -930,6 +1046,34 @@ pub fn resolve(
     Ok((to, options))
 }
 
+/// ", 12.7 MB, was 27.4 MB" when `output` is smaller than `input`, so a
+/// compressed file says what it saved; empty otherwise.
+pub fn size_change(input: &Path, output: &Path) -> String {
+    let size = |p: &Path| std::fs::metadata(p).ok().map(|m| m.len());
+    match (size(input), size(output)) {
+        (Some(before), Some(after)) if after < before => format!(
+            ", {}, was {}",
+            crate::ui::human_size(after),
+            crate::ui::human_size(before)
+        ),
+        _ => String::new(),
+    }
+}
+
+/// `text` as a sentence: capital first letter, full stop.
+fn capitalized(text: &str) -> String {
+    let mut chars = text.trim().chars();
+    let mut out: String = chars
+        .next()
+        .map(|c| c.to_uppercase().collect())
+        .unwrap_or_default();
+    out.push_str(chars.as_str());
+    if !out.ends_with(['.', '!', '?']) {
+        out.push('.');
+    }
+    out
+}
+
 pub fn shared(cx: &App) -> Entity<AppState> {
     cx.global::<Shared>().0.clone()
 }
@@ -952,6 +1096,7 @@ fn absolute_output(output: Output) -> Output {
     }
     match output {
         Output::Beside => Output::Beside,
+        Output::Suffixed(suffix) => Output::Suffixed(suffix),
         Output::Dir(dir) => Output::Dir(absolute(&dir)),
         Output::Exact(path) => match (path.parent(), path.file_name()) {
             (Some(dir), Some(name)) if !dir.as_os_str().is_empty() => {
@@ -973,6 +1118,7 @@ mod tests {
                 done,
                 failed,
                 cancelled,
+                ..Batch::default()
             }
             .summary()
         };
@@ -980,6 +1126,21 @@ mod tests {
         assert_eq!(b(1, 0, 0).unwrap().1, "Converted 1 file.");
         assert_eq!(b(2, 1, 0).unwrap().1, "Converted 2 files; 1 file failed.");
         assert_eq!(b(0, 2, 0).unwrap().0, "Conversion failed");
+        let one = Batch {
+            done: 1,
+            last: Some(PathBuf::from("/x/clip-compressed.mp4")),
+            ..Batch::default()
+        };
+        assert_eq!(one.summary().unwrap().1, "Saved clip-compressed.mp4");
+        let failed = Batch {
+            failed: 1,
+            last_error: Some("already this small, so nothing was saved".into()),
+            ..Batch::default()
+        };
+        assert_eq!(
+            failed.summary().unwrap().1,
+            "Already this small, so nothing was saved."
+        );
     }
 
     #[test]

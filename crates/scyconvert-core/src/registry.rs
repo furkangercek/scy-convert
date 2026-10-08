@@ -38,6 +38,20 @@ pub struct Registry {
     unavailable: Vec<(&'static str, String)>,
 }
 
+/// Where `format` goes in a list of targets: the most wanted first, the rest
+/// after them by name. Menus and Quick convert share it.
+pub fn menu_rank(format: &Format) -> usize {
+    const FIRST: &[&str] = &[
+        "mp4", "mkv", "mov", "webm", "gif", "avi", "wmv", "flv", "mpeg", "m2ts", "3gp", "ogv",
+        "mp3", "m4a", "wav", "flac", "aac", "ogg", "opus", "wma", "aiff", "ac3", "jpeg", "png",
+        "webp", "pdf", "docx",
+    ];
+    FIRST
+        .iter()
+        .position(|id| *id == format.id)
+        .unwrap_or(FIRST.len())
+}
+
 /// Conversions longer than this are almost always lossy detours.
 const MAX_HOPS: usize = 3;
 
@@ -79,14 +93,21 @@ impl Registry {
         &self.unavailable
     }
 
-    /// Finds the shortest chain of engines from `from` to `to`.
+    /// Finds the shortest chain of engines from `from` to `to`. A file
+    /// becomes its own format only through an engine's direct step: a
+    /// re-encode, such as compressing an MP4.
     pub fn plan(&self, from: &'static Format, to: &'static Format) -> Result<Plan> {
         let no_route = || Error::NoRoute {
             from: from.id.into(),
             to: to.id.into(),
         };
         if from == to {
-            return Err(no_route());
+            let edge = self.edges.get(from.id).and_then(|t| t.get(from.id));
+            return edge
+                .map(|edge| Plan {
+                    hops: vec![edge.clone()],
+                })
+                .ok_or_else(no_route);
         }
         let mut prev: HashMap<&str, (&str, &Edge)> = HashMap::new();
         let mut depth: HashMap<&str, usize> = HashMap::from([(from.id, 0)]);
@@ -134,14 +155,57 @@ impl Registry {
         Ok(Plan { hops })
     }
 
-    /// Every format a file of `from` can be converted to, sorted by category then name.
+    /// Every other format a file of `from` can be converted to, sorted by
+    /// category then name.
     pub fn targets(&self, from: &'static Format) -> Vec<&'static Format> {
         let mut out: Vec<_> = crate::FORMATS
             .iter()
-            .filter(|to| self.plan(from, to).is_ok())
+            .filter(|to| *to != from && self.plan(from, to).is_ok())
             .collect();
         out.sort_by_key(|f| (f.category as u8, f.name));
         out
+    }
+
+    /// The targets a right-click menu offers for `from`, in groups by kind,
+    /// most wanted first in each. A video's still frames are only the common
+    /// image formats; the rest stay in Quick convert.
+    pub fn menu_groups(&self, from: &'static Format) -> Vec<(Category, Vec<&'static Format>)> {
+        let moving = matches!(from.category, Category::Video) || from.id == "gif";
+        let mut groups: Vec<(Category, Vec<&'static Format>)> = Vec::new();
+        for to in self.targets(from) {
+            // A video becoming a GIF is still moving, so GIF sits with video.
+            let kind = match to.category {
+                Category::Image if moving && to.id == "gif" => Category::Video,
+                Category::Vector => Category::Image,
+                kind => kind,
+            };
+            if moving && kind == Category::Image && !["jpeg", "png", "webp"].contains(&to.id) {
+                continue;
+            }
+            match groups.iter_mut().find(|(k, _)| *k == kind) {
+                Some((_, list)) => list.push(to),
+                None => groups.push((kind, vec![to])),
+            }
+        }
+        for (_, list) in &mut groups {
+            list.sort_by_key(|f| (menu_rank(f), f.name));
+        }
+        // The source's own kind first: a video's video targets, then audio.
+        let rank = [
+            Category::Video,
+            Category::Audio,
+            Category::Image,
+            Category::Pdf,
+            Category::Document,
+            Category::Spreadsheet,
+            Category::Presentation,
+        ];
+        groups.sort_by_key(|(kind, _)| {
+            let own = *kind == from.category
+                || (from.category == Category::Vector && *kind == Category::Image);
+            (!own, rank.iter().position(|k| k == kind))
+        });
+        groups
     }
 
     /// The few targets a right-click menu offers for `from`, most wanted
@@ -187,19 +251,20 @@ impl Registry {
         tracing::debug!(plan = plan.describe(), "converting {}", input.display());
 
         let (dir, stem, ext) = match &job.output {
-            Output::Beside | Output::Dir(_) => {
+            Output::Beside | Output::Dir(_) | Output::Suffixed(_) => {
                 let dir = match &job.output {
                     Output::Dir(d) => d.clone(),
                     _ => parent_dir(input),
                 };
                 let stem = input
                     .file_stem()
-                    .ok_or_else(|| Error::UndetectedFormat(input.clone()))?;
-                (
-                    dir,
-                    stem.to_string_lossy().into_owned(),
-                    job.to.extension().to_string(),
-                )
+                    .ok_or_else(|| Error::UndetectedFormat(input.clone()))?
+                    .to_string_lossy();
+                let stem = match &job.output {
+                    Output::Suffixed(suffix) => format!("{stem}-{suffix}"),
+                    _ => stem.into_owned(),
+                };
+                (dir, stem, job.to.extension().to_string())
             }
             // The caller's name wins, extension included (`photo.jpeg`, or
             // none at all), so the first output lands exactly on `path`.
@@ -296,6 +361,9 @@ pub enum Output {
     Dir(PathBuf),
     /// At exactly this path (pages get `-2`, `-3`). Fails if it's taken.
     Exact(PathBuf),
+    /// Next to the input as `{stem}-{suffix}`, renamed on collision:
+    /// `clip-compressed.mp4`.
+    Suffixed(String),
 }
 
 /// One file to convert.

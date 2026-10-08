@@ -8,7 +8,9 @@ use scyconvert_core::{
 };
 
 /// Video containers FFmpeg writes. GIF is separate: no audio, its own palette.
-const CONTAINERS: &[&str] = &["mp4", "mov", "mkv", "webm", "avi"];
+const CONTAINERS: &[&str] = &[
+    "mp4", "mov", "mkv", "webm", "avi", "wmv", "flv", "mpeg", "m2ts", "3gp", "ogv",
+];
 
 /// The command line around `-i <input>` and before the output path.
 #[derive(Debug, Default, PartialEq)]
@@ -195,13 +197,80 @@ fn picture_changed(o: &Options) -> bool {
         || o.ten_bit
 }
 
-/// The codec a container gets when the options name none.
+/// The codec a container gets when the options name none. `None` is the
+/// container's own older codec, which no option names (`native_video`).
 fn default_video_codec(to: &str) -> Option<VideoCodec> {
     match to {
         "webm" => Some(VideoCodec::Vp9),
-        // AVI keeps MPEG-4 Part 2, which older players expect.
-        "avi" => None,
+        "avi" | "wmv" | "mpeg" | "ogv" => None,
         _ => Some(VideoCodec::H264),
+    }
+}
+
+/// The encoder and quality scale of a container's own codec: MPEG-4 Part 2
+/// for AVI, WMV 8 for WMV, MPEG-2 for MPEG and Theora for OGV, which their
+/// players expect.
+fn native_video(to: &str, quality: Option<u8>) -> Vec<String> {
+    // qscale runs from 2 (best) to 31.
+    let qscale = quality.map_or(3, |q| 2 + (100 - u32::from(q)) * 29 / 99);
+    let (name, q) = match to {
+        "wmv" => ("wmv2", qscale.to_string()),
+        "mpeg" => ("mpeg2video", qscale.to_string()),
+        // Theora's scale runs from 0 to 10 (best).
+        "ogv" => (
+            "libtheora",
+            quality.map_or(7, |q| u32::from(q) / 10).to_string(),
+        ),
+        _ => ("mpeg4", qscale.to_string()),
+    };
+    ["-c:v", name, "-q:v", &q].map(String::from).to_vec()
+}
+
+/// What the Codec menu calls the codec `to` gets when none is picked.
+pub fn usual_video_codec(to: &str) -> &'static str {
+    match (default_video_codec(to), to) {
+        (Some(codec), _) => codec.name(),
+        (None, "wmv") => "WMV",
+        (None, "mpeg") => "MPEG-2",
+        (None, "ogv") => "Theora",
+        (None, _) => "MPEG-4",
+    }
+}
+
+/// The audio codec a container gets when the options name none; `None` is
+/// the container's own (`native_audio`).
+fn default_audio_codec(to: &str) -> Option<AudioCodec> {
+    match to {
+        "webm" => Some(AudioCodec::Opus),
+        "avi" => Some(AudioCodec::Mp3),
+        "wmv" | "mpeg" | "ogv" => None,
+        _ => Some(AudioCodec::Aac),
+    }
+}
+
+fn native_audio(to: &str, bitrate: Option<u32>) -> Vec<String> {
+    let rate = |default: u32| format!("{}k", bitrate.unwrap_or(default));
+    let mut a = match to {
+        "wmv" => vec!["-c:a".into(), "wmav2".into(), "-b:a".into(), rate(192)],
+        "mpeg" => vec!["-c:a".into(), "mp2".into(), "-b:a".into(), rate(192)],
+        _ => vec!["-c:a".into(), "libvorbis".into()],
+    };
+    if to == "ogv" {
+        match bitrate {
+            Some(b) => a.extend(["-b:a".into(), format!("{b}k")]),
+            None => a.extend(["-q:a".into(), "5".into()]),
+        }
+    }
+    a
+}
+
+/// What the audio Codec menu calls the codec `to` gets when none is picked.
+pub fn usual_audio_codec(to: &str) -> &'static str {
+    match (default_audio_codec(to), to) {
+        (Some(codec), _) => codec.name(),
+        (None, "wmv") => "WMA",
+        (None, "mpeg") => "MP2",
+        (None, _) => "Vorbis",
     }
 }
 
@@ -212,7 +281,9 @@ fn video_codecs(to: &str) -> &'static [VideoCodec] {
         "mov" => &[H264, Hevc, ProRes, Copy],
         "mkv" => &[H264, Hevc, Av1, Vp9, ProRes, Copy],
         "webm" => &[Vp9, Av1, Copy],
-        "avi" => &[Copy],
+        "flv" | "3gp" => &[H264, Copy],
+        "m2ts" => &[H264, Hevc, Copy],
+        "avi" | "wmv" | "mpeg" | "ogv" => &[Copy],
         _ => &[],
     }
 }
@@ -225,6 +296,12 @@ fn audio_codecs(to: &str) -> &'static [AudioCodec] {
         "mkv" => &[Aac, Opus, Mp3, Ac3, Flac, Alac, Copy],
         "webm" => &[Opus, Copy],
         "avi" => &[Mp3, Ac3, Copy],
+        "flv" => &[Aac, Mp3, Copy],
+        "m2ts" => &[Aac, Ac3, Mp3, Copy],
+        "mpeg" => &[Ac3, Mp3, Copy],
+        "3gp" => &[Aac, Copy],
+        "ogv" => &[Opus, Copy],
+        "wmv" => &[Copy],
         "m4a" => &[Aac, Alac, Copy],
         _ => &[],
     }
@@ -264,12 +341,18 @@ fn video_encoder(to: &str, o: &Options) -> Result<Vec<String>> {
     let codec = match o.video_codec.or_else(|| default_video_codec(to)) {
         None => {
             if o.ten_bit {
-                return Err(invalid("AVI video can't be 10-bit".into()));
+                return Err(invalid(format!(
+                    "{} video can't be 10-bit",
+                    usual_video_codec(to)
+                )));
             }
-            let qv = o.quality.map_or(3, |q| 2 + (100 - u32::from(q)) * 29 / 99);
-            return Ok(["-c:v", "mpeg4", "-q:v", &qv.to_string()]
-                .map(String::from)
-                .to_vec());
+            if o.hardware.is_some() {
+                return Err(invalid(format!(
+                    "{} video is encoded on the CPU; pick a codec for the GPU",
+                    usual_video_codec(to)
+                )));
+            }
+            return Ok(native_video(to, o.quality));
         }
         Some(codec) if !video_codecs(to).contains(&codec) => {
             return Err(not_in(
@@ -319,8 +402,17 @@ fn video_encoder(to: &str, o: &Options) -> Result<Vec<String>> {
             };
             let preset = ["veryfast", "fast", "medium", "slow", "veryslow"][speed];
             push(&["-c:v", name, "-preset", preset]);
-            match &bitrate {
-                Some(b) => push(&["-b:v", b]),
+            match o.video_bitrate {
+                // A cap on peaks keeps hard (grainy) footage near the target;
+                // an average alone overshoots it.
+                Some(b) => push(&[
+                    "-b:v",
+                    &format!("{b}k"),
+                    "-maxrate",
+                    &format!("{b}k"),
+                    "-bufsize",
+                    &format!("{}k", b * 2),
+                ]),
                 None => push(&["-crf", &o.quality.map_or(default.into(), |q| crf(q, worst))]),
             }
             name
@@ -423,7 +515,7 @@ fn video_encoder(to: &str, o: &Options) -> Result<Vec<String>> {
         (None, VideoCodec::Copy) => unreachable!("copy returned above"),
     };
     // QuickTime and Apple devices only play HEVC tagged hvc1.
-    if codec == VideoCodec::Hevc && to != "mkv" {
+    if codec == VideoCodec::Hevc && matches!(to, "mp4" | "mov") {
         push(&["-tag:v", "hvc1"]);
     }
     let pix_fmt = match (encoder, o.ten_bit) {
@@ -449,10 +541,9 @@ fn video_audio_encoder(to: &str, o: &Options) -> Result<Vec<String>> {
             ));
         }
         Some(codec) => codec,
-        None => match to {
-            "webm" => AudioCodec::Opus,
-            "avi" => AudioCodec::Mp3,
-            _ => AudioCodec::Aac,
+        None => match default_audio_codec(to) {
+            Some(codec) => codec,
+            None => return Ok(native_audio(to, o.audio_bitrate)),
         },
     };
     audio_encoder(codec, o)
@@ -510,6 +601,21 @@ fn audio_target(to: &str, o: &Options) -> Result<Vec<String>> {
                 "pcm_s16le"
             },
         ]),
+        "aiff" => push(&[
+            "-c:a",
+            if o.bit_depth == Some(24) {
+                "pcm_s24be"
+            } else {
+                "pcm_s16be"
+            },
+        ]),
+        "wma" => push(&[
+            "-c:a",
+            "wmav2",
+            "-b:a",
+            bitrate.as_deref().unwrap_or("192k"),
+        ]),
+        "ac3" => push(&["-c:a", "ac3", "-b:a", bitrate.as_deref().unwrap_or("384k")]),
         "flac" => push(&["-c:a", "flac"]),
         "aac" => push(&["-c:a", "aac", "-b:a", &aac, "-f", "adts"]),
         "m4a" => match o.audio_codec {
@@ -552,6 +658,44 @@ fn chain(filters: Vec<String>) -> Option<String> {
     (!filters.is_empty()).then(|| filters.join(","))
 }
 
+/// `o` with a size target turned into bitrates: the input's own average
+/// bitrate (from its length and size on disk) scaled to `size_percent`, with
+/// a fifth (32 to 128 kbit/s) kept for the audio.
+pub fn with_size_target(
+    to: &str,
+    o: &Options,
+    input_secs: Option<f64>,
+    input_bytes: Option<u64>,
+) -> Result<Options> {
+    let Some(percent) = o.size_percent else {
+        return Ok(o.clone());
+    };
+    let (Some(secs), Some(bytes)) = (input_secs.filter(|s| *s > 0.), input_bytes) else {
+        return Err(invalid(
+            "compressing to a share of the size needs the input's length, and ffprobe can't read it"
+                .into(),
+        ));
+    };
+    let total = bytes as f64 * 8. / secs / 1000. * f64::from(percent) / 100.;
+    let mut sized = o.clone();
+    if CONTAINERS.contains(&to) {
+        let audio = if o.strip_audio {
+            0.
+        } else {
+            o.audio_bitrate
+                .map_or((total * 0.2).clamp(32., 128.), f64::from)
+        };
+        if !o.strip_audio {
+            sized.audio_bitrate = Some(audio as u32);
+        }
+        sized.video_bitrate = Some(((total - audio) as u32).max(100));
+        sized.quality = None;
+    } else {
+        sized.audio_bitrate = Some((total as u32).clamp(8, 640));
+    }
+    Ok(sized)
+}
+
 /// The arguments to convert to `to`. `input_secs` is the input's length,
 /// which fading out needs.
 pub fn ffmpeg_args(to: &str, o: &Options, input_secs: Option<f64>) -> Result<Args> {
@@ -578,7 +722,7 @@ pub fn ffmpeg_args(to: &str, o: &Options, input_secs: Option<f64>) -> Result<Arg
                     output.extend(audio_shape(to, o));
                 }
             }
-            if matches!(to, "mp4" | "mov") {
+            if matches!(to, "mp4" | "mov" | "3gp") {
                 output.extend(["-movflags".into(), "+faststart".into()]);
             }
             if o.strip_audio {
@@ -756,6 +900,73 @@ mod tests {
             ..with(VideoCodec::Copy)
         };
         assert!(err("mp4", &copy_and_crop).contains("pick a codec"));
+    }
+
+    #[test]
+    fn size_targets_come_from_the_input() {
+        let o = Options {
+            size_percent: Some(50),
+            ..Options::default()
+        };
+        // 10 MB over 10 s is 8000 kbit/s; half is 4000, 128 of it audio.
+        let sized = with_size_target("mp4", &o, Some(10.), Some(10_000_000)).unwrap();
+        assert_eq!(
+            (sized.video_bitrate, sized.audio_bitrate),
+            (Some(3872), Some(128))
+        );
+        assert!(out("mp4", &sized).contains("-b:v 3872k"));
+        let muted = Options {
+            strip_audio: true,
+            ..o.clone()
+        };
+        let sized = with_size_target("mp4", &muted, Some(10.), Some(10_000_000)).unwrap();
+        assert_eq!(
+            (sized.video_bitrate, sized.audio_bitrate),
+            (Some(4000), None)
+        );
+        assert!(with_size_target("mp4", &o, None, Some(1)).is_err());
+        assert_eq!(
+            with_size_target("mp4", &Options::default(), None, None).unwrap(),
+            Options::default()
+        );
+    }
+
+    #[test]
+    fn older_containers_use_their_own_codecs() {
+        let o = Options::default();
+        assert_eq!(out("wmv", &o), "-c:v wmv2 -q:v 3 -c:a wmav2 -b:a 192k");
+        assert_eq!(out("mpeg", &o), "-c:v mpeg2video -q:v 3 -c:a mp2 -b:a 192k");
+        assert_eq!(
+            out("ogv", &o),
+            "-c:v libtheora -q:v 7 -c:a libvorbis -q:a 5"
+        );
+        assert!(out("flv", &o).starts_with("-c:v libx264"));
+        assert!(out("3gp", &o).ends_with("-movflags +faststart"));
+        // HEVC in M2TS needs no QuickTime tag.
+        let hevc = Options {
+            video_codec: Some(VideoCodec::Hevc),
+            ..Options::default()
+        };
+        assert!(!out("m2ts", &hevc).contains("hvc1"));
+        assert_eq!(usual_video_codec("wmv"), "WMV");
+        assert_eq!(usual_audio_codec("mpeg"), "MP2");
+        let nv = Options {
+            hardware: Some(Hardware::Nvidia),
+            ..Options::default()
+        };
+        assert!(err("wmv", &nv).contains("on the CPU"));
+        let mute = Options {
+            video_codec: Some(VideoCodec::Copy),
+            strip_audio: true,
+            ..Options::default()
+        };
+        assert_eq!(out("wmv", &mute), "-c:v copy -an");
+        let aiff = Options {
+            bit_depth: Some(24),
+            ..Options::default()
+        };
+        assert_eq!(out("aiff", &aiff), "-vn -c:a pcm_s24be");
+        assert_eq!(out("wma", &Options::default()), "-vn -c:a wmav2 -b:a 192k");
     }
 
     #[test]

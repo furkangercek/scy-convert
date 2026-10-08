@@ -7,7 +7,7 @@ use scyconvert_core::{
     Aspect, Category, Channels, EncoderSpeed, Flip, Format, Hardware, Options, Rotation,
     SAMPLE_RATES, Timestamp,
 };
-use scyconvert_engines::ffmpeg_args::audio_codec_choices;
+use scyconvert_engines::ffmpeg_args::{audio_codec_choices, usual_audio_codec};
 
 /// The id of every dropdown's "leave it as it is" choice.
 pub const DEFAULT: &str = "default";
@@ -337,11 +337,7 @@ fn audio(to: &Format) -> Section {
     let mut fields = Vec::new();
     let codecs = audio_codec_choices(to.id);
     if !codecs.is_empty() {
-        let usual = match to.id {
-            "webm" => "Opus",
-            "avi" => "MP3",
-            _ => "AAC",
-        };
+        let usual = usual_audio_codec(to.id);
         fields.push(select(
             "audio-codec",
             "Codec",
@@ -392,7 +388,7 @@ fn audio(to: &Format) -> Section {
         |o| id_of(o.channels),
         |o, id| o.channels = id.parse().ok(),
     ));
-    if matches!(to.id, "wav" | "flac") {
+    if matches!(to.id, "wav" | "flac" | "aiff") {
         fields.push(select(
             "bit-depth",
             "Bit depth",

@@ -353,10 +353,12 @@ fn reveal(cx: &mut TestAppContext, handle: AnyWindowHandle, name: &str) {
             .update_window(handle, |_, window, cx| {
                 window.render_frame(cx);
                 let target = window.find(id(name));
-                if target.visible() {
+                let body = window.find(id("quick-body")).bounds();
+                let inside = target.bounds().top() >= body.top()
+                    && target.bounds().bottom() <= body.bottom();
+                if target.visible() && inside {
                     return None;
                 }
-                let body = window.find(id("quick-body")).bounds();
                 Some(if target.bounds().top() < body.top() {
                     80.
                 } else {
@@ -1511,7 +1513,7 @@ fn quick_convert_offers_codec_and_keep_audio_for_video(cx: &mut TestAppContext) 
         eprintln!("skipping: no engine converts MOV here (is FFmpeg installed?)");
         return;
     }
-    click(cx, window, "to-mp4");
+    click_below(cx, window, "to-mp4");
     // Defaults change nothing.
     assert_eq!(label(cx, window, "codec").as_deref(), Some("H.264"));
     assert_eq!(
@@ -1520,9 +1522,9 @@ fn quick_convert_offers_codec_and_keep_audio_for_video(cx: &mut TestAppContext) 
     );
     cx.read(|cx| assert_eq!(view.read(cx).conversion_options(), Options::default()));
 
-    click(cx, window, "codec");
-    click(cx, window, "codec-hevc");
-    click(cx, window, "keep-audio");
+    click_below(cx, window, "codec");
+    click_below(cx, window, "codec-hevc");
+    click_below(cx, window, "keep-audio");
     assert_eq!(label(cx, window, "codec").as_deref(), Some("HEVC"));
     cx.read(|cx| {
         let o = view.read(cx).conversion_options();
@@ -1531,20 +1533,20 @@ fn quick_convert_offers_codec_and_keep_audio_for_video(cx: &mut TestAppContext) 
             (Some(VideoCodec::Hevc), true)
         );
     });
-    click(cx, window, "keep-audio");
+    click_below(cx, window, "keep-audio");
     cx.read(|cx| assert!(!view.read(cx).conversion_options().strip_audio));
 
     // WebM offers its own codecs, and HEVC isn't one of them; GIF has
     // neither a codec nor audio.
-    click(cx, window, "to-webm");
+    click_below(cx, window, "to-webm");
     assert_eq!(label(cx, window, "codec").as_deref(), Some("VP9"));
     assert!(shown(cx, window, "keep-audio"));
     cx.read(|cx| assert_eq!(view.read(cx).conversion_options().video_codec, None));
-    click(cx, window, "to-gif");
+    click_below(cx, window, "to-gif");
     assert!(!shown(cx, window, "codec") && !shown(cx, window, "keep-audio"));
 
     // A preset loads both controls, and they can be changed back.
-    click(cx, window, "preset-small");
+    click_below(cx, window, "preset-small");
     cx.read(|cx| {
         let v = view.read(cx);
         assert_eq!(
@@ -1552,9 +1554,9 @@ fn quick_convert_offers_codec_and_keep_audio_for_video(cx: &mut TestAppContext) 
             (Some(VideoCodec::Hevc), true)
         );
     });
-    click(cx, window, "codec");
-    click(cx, window, "codec-h264");
-    click(cx, window, "keep-audio");
+    click_below(cx, window, "codec");
+    click_below(cx, window, "codec-h264");
+    click_below(cx, window, "keep-audio");
     cx.read(|cx| {
         let o = view.read(cx).conversion_options();
         assert_eq!(
@@ -2426,5 +2428,118 @@ fn quick_convert_has_collapsible_video_and_audio_options(cx: &mut TestAppContext
             assert_eq!((o.crop, o.grayscale, o.hardware), (None, false, None));
             assert_eq!(o.channels, Some(scyconvert_core::Channels::Mono));
         });
+    }
+}
+
+#[gpui_kit::test]
+fn a_menu_conversion_notifies_without_a_window(cx: &mut TestAppContext) {
+    let f = Fixture::new(cx);
+    let app = f.app.clone();
+    cx.update(|cx| {
+        app.update(cx, |s, cx| {
+            s.update_settings(
+                |s| {
+                    s.notifications = true;
+                    s.reveal_when_done = true;
+                },
+                cx,
+            )
+        })
+    });
+    let png = f.png("menu.png");
+    let mut request = cli(vec![png], Some("jpeg"), None);
+    request.notify = true;
+    cx.update(|cx| super::route(request, cx));
+    assert!(cx.update(|cx| cx.windows().is_empty()), "no window opens");
+    wait_until(cx, "the menu conversion", |cx| {
+        f.app.read(cx).recent.len() == 1
+    });
+    let shown = cx.shown_system_notifications();
+    assert_eq!(shown.len(), 1);
+    assert_eq!(shown[0].body.as_ref(), "Saved menu.jpg");
+    cx.read(|cx| {
+        let state = f.app.read(cx);
+        assert!(
+            state.revealed.is_empty(),
+            "a menu conversion is not revealed"
+        );
+        assert_eq!(state.notified, Some(f.dir.path().join("menu.jpg")));
+    });
+}
+
+/// A short silent stereo WAV.
+fn wav(dir: &Path, name: &str) -> PathBuf {
+    let (rate, channels, samples) = (8000u32, 2u16, 4000u32);
+    let data = samples * u32::from(channels) * 2;
+    let mut bytes = Vec::new();
+    bytes.extend(b"RIFF");
+    bytes.extend((36 + data).to_le_bytes());
+    bytes.extend(b"WAVEfmt ");
+    bytes.extend(16u32.to_le_bytes());
+    bytes.extend(1u16.to_le_bytes());
+    bytes.extend(channels.to_le_bytes());
+    bytes.extend(rate.to_le_bytes());
+    bytes.extend((rate * u32::from(channels) * 2).to_le_bytes());
+    bytes.extend((channels * 2).to_le_bytes());
+    bytes.extend(16u16.to_le_bytes());
+    bytes.extend(b"data");
+    bytes.extend(data.to_le_bytes());
+    bytes.resize(bytes.len() + data as usize, 0);
+    let path = dir.join(name);
+    std::fs::write(&path, bytes).unwrap();
+    path
+}
+
+#[gpui_kit::test]
+fn a_menu_action_keeps_the_format_and_names_the_change(cx: &mut TestAppContext) {
+    let f = Fixture::new(cx);
+    let song = wav(f.dir.path(), "song.wav");
+    let actions = cx.read(|cx| f.app.read(cx).common_actions(std::slice::from_ref(&song)));
+    if !actions.iter().any(|(id, _)| *id == "mono") {
+        eprintln!("skipping: no engine re-encodes WAV here (is FFmpeg installed?)");
+        return;
+    }
+    let mut request = cli(vec![song], None, None);
+    request.action = Some("mono".into());
+    request.notify = true;
+    cx.update(|cx| super::route(request, cx));
+    assert!(cx.update(|cx| cx.windows().is_empty()));
+    wait_until(cx, "the action", |cx| f.app.read(cx).recent.len() == 1);
+    cx.read(|cx| {
+        let recent = &f.app.read(cx).recent;
+        assert!(
+            matches!(&recent[0].outcome, Outcome::Done(out) if out[0].ends_with("song-mono.wav")),
+            "{:?}",
+            recent[0].outcome
+        );
+    });
+}
+
+#[gpui_kit::test]
+fn quick_convert_for_a_video_offers_actions_and_common_stills(cx: &mut TestAppContext) {
+    let f = Fixture::new(cx);
+    let clip = f.dir.path().join("clip.mov");
+    std::fs::write(&clip, "not really a movie").unwrap();
+    let (window, view) = f.quick(cli(vec![clip], None, None), cx);
+    let targets = cx.read(|cx| view.read(cx).targets.formats.clone());
+    if !targets.iter().any(|t| t.id == "wmv") {
+        eprintln!("skipping: no engine converts MOV here (is FFmpeg installed?)");
+        return;
+    }
+    for shown_id in [
+        "action-compress-half",
+        "action-mute",
+        "to-wmv",
+        "to-png",
+        "to-gif",
+        "to-mp3",
+    ] {
+        reveal(cx, window, shown_id);
+        assert!(shown(cx, window, shown_id), "{shown_id}");
+    }
+    // Every image format is reachable, but only the usual stills show.
+    assert!(targets.iter().any(|t| t.id == "bmp"));
+    for hidden in ["to-bmp", "to-ico", "to-exr", "action-mono"] {
+        assert!(!shown(cx, window, hidden), "{hidden}");
     }
 }

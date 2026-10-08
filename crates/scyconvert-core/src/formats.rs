@@ -83,6 +83,12 @@ formats! {
     "webm", "WebM", Video, ["webm"], "video/webm";
     "mkv", "MKV", Video, ["mkv"], "video/x-matroska";
     "avi", "AVI", Video, ["avi"], "video/x-msvideo";
+    "wmv", "WMV", Video, ["wmv", "asf"], "video/x-ms-wmv";
+    "flv", "FLV", Video, ["flv"], "video/x-flv";
+    "mpeg", "MPEG", Video, ["mpg", "mpeg", "vob"], "video/mpeg";
+    "m2ts", "M2TS", Video, ["m2ts", "mts"], "video/mp2t";
+    "3gp", "3GP", Video, ["3gp", "3g2"], "video/3gpp";
+    "ogv", "OGV", Video, ["ogv"], "video/ogg";
     // Audio
     "mp3", "MP3", Audio, ["mp3"], "audio/mpeg";
     "wav", "WAV", Audio, ["wav"], "audio/wav";
@@ -91,6 +97,9 @@ formats! {
     "m4a", "M4A", Audio, ["m4a"], "audio/mp4";
     "ogg", "OGG", Audio, ["ogg", "oga"], "audio/ogg";
     "opus", "Opus", Audio, ["opus"], "audio/opus";
+    "wma", "WMA", Audio, ["wma"], "audio/x-ms-wma";
+    "aiff", "AIFF", Audio, ["aiff", "aif"], "audio/aiff";
+    "ac3", "AC-3", Audio, ["ac3"], "audio/ac3";
     // PDF
     "pdf", "PDF", Pdf, ["pdf"], "application/pdf";
     // Office

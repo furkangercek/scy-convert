@@ -24,6 +24,9 @@ pub enum Error {
     },
     #[error("{0} already exists")]
     OutputExists(PathBuf),
+    /// Compressing didn't make the file smaller, so the result was dropped.
+    #[error("already this small, so nothing was saved")]
+    NotSmaller,
     #[error("cancelled")]
     Cancelled,
     #[error(transparent)]
@@ -40,6 +43,7 @@ impl Error {
             Self::EngineUnavailable { .. } => "engine_missing",
             Self::EngineFailed { .. } => "engine_failed",
             Self::OutputExists(_) => "output_exists",
+            Self::NotSmaller => "not_smaller",
             Self::Cancelled => "cancelled",
             Self::Io(_) => "io",
         }

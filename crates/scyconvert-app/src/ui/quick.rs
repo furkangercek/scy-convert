@@ -14,7 +14,7 @@ use gpui_kit::*;
 use scyconvert_core::{
     Background, Category, Format, Options, Output, Registry, Timestamp, VideoCodec, format_by_id,
 };
-use scyconvert_engines::ffmpeg_args::video_codec_choices;
+use scyconvert_engines::ffmpeg_args::{usual_video_codec, video_codec_choices};
 
 use super::advanced::{self, Control};
 use super::theme::{
@@ -22,7 +22,7 @@ use super::theme::{
 };
 use super::{error_text, file_size, human_size, time_left};
 use crate::jobs::{Entry, JobId, Status};
-use crate::model::{self, AppState, PackPhase, Targets};
+use crate::model::{self, AppState, Feedback, PackPhase, Targets};
 use crate::pack;
 use crate::request::Request;
 
@@ -439,6 +439,28 @@ impl QuickView {
         cx.notify();
     }
 
+    /// Runs a quick action on the files right away, each with its own
+    /// target: a compressed MKV stays an MKV.
+    pub(super) fn run_action(&mut self, action: &'static str, cx: &mut Context<Self>) {
+        let files = self.supported();
+        if files.is_empty() || !self.jobs.is_empty() {
+            return;
+        }
+        let dir = self.save_dir.clone();
+        let queued = self.app.update(cx, |s, cx| {
+            s.queue_action(&files, action, dir.as_deref(), Feedback::Normal, cx)
+        });
+        match queued {
+            Ok(jobs) => {
+                self.jobs = jobs;
+                let app = self.app.clone();
+                self.remember(&app, cx);
+            }
+            Err(e) => self.error = Some(e),
+        }
+        cx.notify();
+    }
+
     fn choose_folder(&mut self, cx: &mut Context<Self>) {
         let picked = cx.prompt_for_paths(PathPromptOptions {
             files: false,
@@ -548,9 +570,10 @@ impl QuickView {
             return None;
         }
         let video_input = self.files.iter().any(|f| {
-            scyconvert_core::format_by_extension(f).is_some_and(|f| f.category == Category::Video)
+            scyconvert_core::format_by_extension(f)
+                .is_some_and(|f| f.category == Category::Video || f.id == "gif")
         });
-        let cards = self.targets.formats.iter().map(|&format| {
+        let card = |format: &'static Format, cx: &mut Context<Self>| {
             let on = self.to == Some(format);
             let weak = cx.entity().downgrade();
             theme::clickable(SharedString::from(format!("to-{}", format.id)), format.name)
@@ -584,7 +607,61 @@ impl QuickView {
                         .truncate()
                         .child(blurb(format, video_input)),
                 )
-        });
+        };
+        let groups: Vec<Div> = target_groups(&self.targets.formats, video_input, self.to)
+            .into_iter()
+            .map(|(title, formats)| {
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(6.))
+                    .child(text(11., 14., p.tertiary).child(title))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_wrap()
+                            .gap(px(8.))
+                            .children(formats.into_iter().map(|f| card(f, cx))),
+                    )
+            })
+            .collect();
+        let actions = self.app.read(cx).common_actions(&self.supported());
+        let action_rows: Vec<Div> = if self.jobs.is_empty() {
+            scyconvert_core::ActionMenu::ALL
+                .into_iter()
+                .filter_map(|menu| {
+                    let mine: Vec<_> = actions.iter().filter(|(_, p)| p.menu == menu).collect();
+                    (!mine.is_empty()).then(|| {
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap(px(8.))
+                            .child(section_label(menu.name(), p))
+                            .child(div().flex().flex_wrap().gap(px(6.)).children(
+                                mine.into_iter().map(|(id, plan)| {
+                                    let id: &'static str = id;
+                                    theme::clickable(
+                                        SharedString::from(format!("action-{id}")),
+                                        plan.label.clone(),
+                                    )
+                                    .px(px(10.))
+                                    .py(px(4.))
+                                    .rounded(px(6.))
+                                    .bg(p.chip)
+                                    .border_1()
+                                    .border_color(p.chip_border)
+                                    .on_click(
+                                        cx.listener(move |this, _, _, cx| this.run_action(id, cx)),
+                                    )
+                                    .child(text(12., 16., p.text).child(plan.label.clone()))
+                                }),
+                            ))
+                    })
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
         let presets: Vec<(String, String)> = self
             .app
             .read(cx)
@@ -637,6 +714,7 @@ impl QuickView {
         });
         let picker = section(p)
             .gap(px(10.))
+            .children(action_rows)
             .child(section_label("Convert to", p))
             .child(if self.targets.formats.is_empty() {
                 text(13., 16., p.text)
@@ -645,9 +723,9 @@ impl QuickView {
             } else {
                 div()
                     .flex()
-                    .flex_wrap()
-                    .gap(px(8.))
-                    .children(cards)
+                    .flex_col()
+                    .gap(px(12.))
+                    .children(groups)
                     .into_any_element()
             })
             .children(preset_row);
@@ -759,7 +837,7 @@ impl QuickView {
                     "codec",
                     self.video_codec
                         .filter(|c| video_codec_choices(to.id).contains(c))
-                        .map_or(usual_codec(to), VideoCodec::name),
+                        .map_or(usual_video_codec(to.id), VideoCodec::name),
                     180.,
                     false,
                     self.open == Some(Open::Codec),
@@ -1084,7 +1162,11 @@ impl QuickView {
                     }
                 }
                 Status::Done(outputs) => match outputs.as_slice() {
-                    [one] => format!("Saved {}", model::file_name(one)),
+                    [one] => format!(
+                        "Saved {}{}",
+                        model::file_name(one),
+                        model::size_change(&entry.input, one)
+                    ),
                     many => format!("Saved {} files", many.len()),
                 },
                 Status::Failed(e) => e.message.clone(),
@@ -1227,19 +1309,12 @@ fn codec_applies(to: &Format) -> bool {
     !video_codec_choices(to.id).is_empty()
 }
 
-/// The codec `to` gets when none is picked.
-fn usual_codec(to: &Format) -> &'static str {
-    match to.id {
-        "webm" => VideoCodec::Vp9.name(),
-        "avi" => "MPEG-4",
-        _ => VideoCodec::H264.name(),
-    }
-}
-
-/// The Codec menu: AVI's usual MPEG-4, which no option names, then what the
-/// container takes.
+/// The Codec menu: the container's own older codec (AVI's MPEG-4, WMV's
+/// WMV), which no option names, then what the container takes.
 fn codec_menu(to: &Format) -> Vec<Choice> {
-    let usual = (to.id == "avi").then(|| Choice::new("mpeg4", "MPEG-4"));
+    let usual = usual_video_codec(to.id);
+    let usual = (!video_codec_choices(to.id).iter().any(|c| c.name() == usual))
+        .then(|| Choice::new("usual", usual));
     usual
         .into_iter()
         .chain(
@@ -1356,6 +1431,47 @@ fn size_choices(to: &Format) -> Option<(&'static str, &'static [SizeChoice])> {
     }
 }
 
+/// Targets in groups by kind, the input's own kind first. A video's still
+/// frames are only the common image formats, plus whatever is picked.
+fn target_groups(
+    formats: &[&'static Format],
+    video_input: bool,
+    picked: Option<&'static Format>,
+) -> Vec<(&'static str, Vec<&'static Format>)> {
+    // A video becoming a GIF is still moving, so GIF sits with video.
+    let group = |f: &Format| match f.category {
+        Category::Video => 0,
+        Category::Image if video_input && f.id == "gif" => 0,
+        Category::Audio => 1,
+        Category::Image | Category::Vector => 2,
+        Category::Pdf | Category::Document => 3,
+        Category::Presentation | Category::Spreadsheet => 4,
+    };
+    let titles = [
+        "Video",
+        "Audio",
+        if video_input { "Still frame" } else { "Image" },
+        "Document",
+        "Slides and sheets",
+    ];
+    let still = ["jpeg", "png", "webp"];
+    titles
+        .into_iter()
+        .enumerate()
+        .map(|(i, title)| {
+            let mut list: Vec<_> = formats
+                .iter()
+                .copied()
+                .filter(|f| group(f) == i)
+                .filter(|f| !video_input || i != 2 || still.contains(&f.id) || picked == Some(*f))
+                .collect();
+            list.sort_by_key(|f| (scyconvert_core::menu_rank(f), f.name));
+            (title, list)
+        })
+        .filter(|(_, list)| !list.is_empty())
+        .collect()
+}
+
 /// A few words on what a target is good for.
 fn blurb(to: &Format, video_input: bool) -> &'static str {
     if video_input && to.category == Category::Audio {
@@ -1368,6 +1484,15 @@ fn blurb(to: &Format, video_input: bool) -> &'static str {
         "mkv" => "Keeps tracks",
         "mov" => "For editing",
         "avi" => "Older players",
+        "wmv" => "Windows players",
+        "flv" => "Flash video",
+        "mpeg" => "DVD players",
+        "m2ts" => "Blu-ray, camcorders",
+        "3gp" => "Old phones",
+        "ogv" => "Open format",
+        "wma" => "Windows players",
+        "aiff" => "Uncompressed",
+        "ac3" => "Surround sound",
         "mp3" => "Any player",
         "wav" => "Uncompressed",
         "flac" => "Lossless",

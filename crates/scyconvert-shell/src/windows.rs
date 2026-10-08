@@ -16,7 +16,16 @@ use windows::Win32::System::Threading::CREATE_NO_WINDOW;
 use windows::Win32::UI::Shell::*;
 use windows::core::*;
 
-pub const CLSID: GUID = GUID::from_u128(0xbb1183d6_e6ca_44e1_906c_a0a47845841d);
+use crate::{Entry, Item, MENUS, Submenu, common_menus, parse_menus};
+
+/// One COM class per top-level menu, in `MENUS` order. The installer and
+/// the sparse package register each one; the first is the original
+/// "Convert with scyconvert" class.
+pub const CLSIDS: [GUID; 3] = [
+    GUID::from_u128(0xbb1183d6_e6ca_44e1_906c_a0a47845841d),
+    GUID::from_u128(0xb77c2bc9_b09c_4659_85cf_d4e34fc6ca15),
+    GUID::from_u128(0x7b070ad5_9dfe_4769_b4a3_27cc8b0fb2ca),
+];
 static OBJECTS: AtomicUsize = AtomicUsize::new(0);
 static SERVER_LOCKS: AtomicUsize = AtomicUsize::new(0);
 struct ModuleLease;
@@ -86,36 +95,49 @@ fn files(items: Ref<IShellItemArray>) -> Result<Vec<PathBuf>> {
 
 // Probe once per extension, not once per file. Cache expires so installing or
 // removing document support updates the menu without restarting Explorer.
-type Cache = HashMap<OsString, (Instant, Vec<String>)>;
-static TARGETS: OnceLock<Mutex<Cache>> = OnceLock::new();
-fn targets(path: &Path) -> Vec<String> {
+type Cache = HashMap<OsString, (Instant, Vec<Submenu>)>;
+static MENUS_BY_EXTENSION: OnceLock<Mutex<Cache>> = OnceLock::new();
+fn menus_for(path: &Path) -> Vec<Submenu> {
     let Some(extension) = path.extension().map(|e| e.to_ascii_lowercase()) else {
-        return vec![];
+        return Vec::new();
     };
-    let cache = TARGETS.get_or_init(Default::default);
+    let cache = MENUS_BY_EXTENSION.get_or_init(Default::default);
     if let Ok(cache) = cache.lock()
-        && let Some((when, result)) = cache.get(&extension)
+        && let Some((when, menus)) = cache.get(&extension)
         && when.elapsed() < CACHE_TTL
     {
-        return result.clone();
+        return menus.clone();
     }
-    let Some(result) = probe(path) else {
-        return vec![];
+    let Some(menus) = probe(path) else {
+        return Vec::new();
     };
     if let Ok(mut cache) = cache.lock() {
         if cache.len() >= 256 {
             cache.clear();
         }
-        cache.insert(extension, (Instant::now(), result.clone()));
+        cache.insert(extension, (Instant::now(), menus.clone()));
     }
-    result
+    menus
+}
+
+/// The entries of top-level menu `menu` for a selection.
+fn selection_entries(menu: usize, paths: &[PathBuf]) -> Vec<Entry> {
+    let per_file: Vec<_> = paths.iter().map(|p| menus_for(p)).collect();
+    common_menus(&per_file)
+        .into_iter()
+        .find(|m| m.id == MENUS[menu].0)
+        .map(|m| m.entries)
+        .unwrap_or_default()
 }
 
 #[derive(Serialize)]
 struct ExplorerRequest<'a> {
     files: &'a [PathBuf],
     show_progress: bool,
+    /// Say when it's done with a notification, since no window opens.
+    notify: bool,
     to: Option<&'a str>,
+    action: Option<&'a str>,
     preset: Option<&'a str>,
     source: &'static str,
 }
@@ -126,7 +148,7 @@ fn request_dir() -> PathBuf {
         .unwrap_or_else(|| std::env::temp_dir().join("scyconvert"))
 }
 
-fn handoff(paths: &[PathBuf], target: &str) -> Result<()> {
+fn handoff(paths: &[PathBuf], to: Option<&str>, action: Option<&str>) -> Result<()> {
     static REQUEST_ID: AtomicUsize = AtomicUsize::new(0);
     let dir = request_dir();
     std::fs::create_dir_all(&dir).map_err(|_| error())?;
@@ -137,8 +159,10 @@ fn handoff(paths: &[PathBuf], target: &str) -> Result<()> {
     );
     let request = ExplorerRequest {
         files: paths,
-        show_progress: true,
-        to: Some(target),
+        show_progress: false,
+        notify: true,
+        to,
+        action,
         preset: None,
         source: "Cli",
     };
@@ -168,7 +192,7 @@ fn app_running() -> bool {
     let _ = unsafe { CloseHandle(handle) };
     true
 }
-fn probe(path: &Path) -> Option<Vec<String>> {
+fn probe(path: &Path) -> Option<Vec<Submenu>> {
     let mut child = Command::new(install_dir().ok()?.join("scyconvert.exe"))
         .arg("targets")
         .arg(path)
@@ -182,8 +206,8 @@ fn probe(path: &Path) -> Option<Vec<String>> {
     let stdout = child.stdout.take()?;
     let reader = std::thread::spawn(move || {
         let mut bytes = Vec::new();
-        stdout.take(4097).read_to_end(&mut bytes).ok()?;
-        (bytes.len() <= 4096).then_some(bytes)
+        stdout.take(16385).read_to_end(&mut bytes).ok()?;
+        (bytes.len() <= 16384).then_some(bytes)
     });
     let start = Instant::now();
     let status = loop {
@@ -203,36 +227,39 @@ fn probe(path: &Path) -> Option<Vec<String>> {
     if !status?.success() {
         return None;
     }
-    let output = String::from_utf8(bytes).ok()?;
-    let targets: Vec<_> = output.split_whitespace().map(str::to_owned).collect();
-    targets
-        .iter()
-        .all(|id| {
-            id.len() <= 32
-                && id
-                    .bytes()
-                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
-        })
-        .then_some(targets)
+    parse_menus(&String::from_utf8(bytes).ok()?)
+}
+
+/// What a command in the menu is.
+#[derive(Clone)]
+enum Kind {
+    /// A top-level menu, by index in `MENUS`, holding everything else.
+    Root(usize),
+    /// Greyed text over the entries below it.
+    Heading(String),
+    Format(Item),
+    Action(Item),
+    Separator,
 }
 
 #[implement(IExplorerCommand, IObjectWithSite)]
 struct ExplorerCommand {
     _lease: ModuleLease,
-    target: Option<String>,
+    kind: Kind,
     site: Mutex<Option<IUnknown>>,
     selection: Mutex<Vec<PathBuf>>,
-    children: Mutex<Vec<String>>,
 }
 impl ExplorerCommand {
-    fn root() -> Self {
+    fn new(kind: Kind, selection: Vec<PathBuf>) -> Self {
         Self {
             _lease: ModuleLease::new(),
-            target: None,
+            kind,
             site: Mutex::new(None),
-            selection: Mutex::new(vec![]),
-            children: Mutex::new(vec![]),
+            selection: Mutex::new(selection),
         }
+    }
+    fn root(menu: usize) -> Self {
+        Self::new(Kind::Root(menu), vec![])
     }
 }
 impl IObjectWithSite_Impl for ExplorerCommand_Impl {
@@ -276,62 +303,93 @@ impl ExplorerCommand_Impl {
             Ok(paths)
         }
     }
+
+    /// The commands under this one.
+    fn children(&self) -> Result<Vec<Kind>> {
+        let Kind::Root(menu) = self.kind else {
+            return Ok(Vec::new());
+        };
+        Ok(selection_entries(menu, &self.selected_paths()?)
+            .into_iter()
+            .map(|entry| match entry {
+                Entry::Heading(text) => Kind::Heading(text),
+                Entry::Format(item) => Kind::Format(item),
+                Entry::Action(item) => Kind::Action(item),
+                Entry::Separator => Kind::Separator,
+            })
+            .collect())
+    }
 }
 impl IExplorerCommand_Impl for ExplorerCommand_Impl {
     fn GetTitle(&self, items: Ref<IShellItemArray>) -> Result<PWSTR> {
-        if self.target.is_none()
-            && let Ok(paths) = files(items)
-        {
-            *self.selection.lock().map_err(|_| error())? = paths;
+        match &self.kind {
+            Kind::Root(menu) => {
+                if let Ok(paths) = files(items) {
+                    *self.selection.lock().map_err(|_| error())? = paths;
+                }
+                text(MENUS[*menu].1)
+            }
+            Kind::Heading(heading) => text(heading),
+            Kind::Format(item) | Kind::Action(item) => text(&item.label),
+            Kind::Separator => text(""),
         }
-        text(
-            &self
-                .target
-                .as_ref()
-                .map_or_else(|| "Convert with scyconvert".into(), |t| t.to_uppercase()),
-        )
     }
     fn GetIcon(&self, _: Ref<IShellItemArray>) -> Result<PWSTR> {
+        if !matches!(self.kind, Kind::Root(_)) {
+            return Err(Error::from_hresult(E_NOTIMPL));
+        }
         text(&format!(
             "{},0",
             install_dir()?.join("scyconvert-app.exe").display()
         ))
     }
     fn GetToolTip(&self, _: Ref<IShellItemArray>) -> Result<PWSTR> {
-        text("Convert locally with scyconvert")
+        if !matches!(self.kind, Kind::Root(_)) {
+            return Err(Error::from_hresult(E_NOTIMPL));
+        }
+        text("Runs on this computer")
     }
     fn GetCanonicalName(&self) -> Result<GUID> {
-        let mut id = CLSID;
-        if let Some(target) = &self.target {
-            // Stable distinct canonical names for each target, independent of menu order.
-            id.data1 ^= target
-                .bytes()
-                .fold(2166136261u32, |h, b| (h ^ b as u32).wrapping_mul(16777619));
-        }
+        let key = match &self.kind {
+            Kind::Root(menu) => return Ok(CLSIDS[*menu]),
+            Kind::Heading(h) => format!("heading:{h}"),
+            Kind::Format(i) => format!("format:{}", i.id),
+            Kind::Action(i) => format!("action:{}", i.id),
+            Kind::Separator => "separator".into(),
+        };
+        // Stable distinct canonical names for each entry, independent of menu order.
+        let mut id = CLSIDS[0];
+        id.data1 ^= key
+            .bytes()
+            .fold(2166136261u32, |h, b| (h ^ b as u32).wrapping_mul(16777619));
         Ok(id)
     }
     // Answers even when `slow` is false: the classic menu reads E_PENDING as
     // hidden, and the probe is ~50 ms once per extension (then cached).
     fn GetState(&self, items: Ref<IShellItemArray>, _slow: BOOL) -> Result<u32> {
-        if self.target.is_some() {
-            return Ok(ECS_ENABLED.0 as u32);
-        }
+        let menu = match self.kind {
+            Kind::Root(menu) => menu,
+            Kind::Heading(_) => return Ok(ECS_DISABLED.0 as u32),
+            _ => return Ok(ECS_ENABLED.0 as u32),
+        };
         let Ok(paths) = files(items) else {
             return Ok(ECS_HIDDEN.0 as u32);
         };
-        let lists: Vec<_> = paths.iter().map(|p| targets(p)).collect();
-        let targets = crate::common_targets(&lists);
+        let entries = selection_entries(menu, &paths);
         *self.selection.lock().map_err(|_| error())? = paths;
-        let state = if targets.is_empty() {
+        Ok(if entries.is_empty() {
             ECS_HIDDEN
         } else {
             ECS_ENABLED
-        };
-        *self.children.lock().map_err(|_| error())? = targets;
-        Ok(state.0 as u32)
+        }
+        .0 as u32)
     }
     fn Invoke(&self, items: Ref<IShellItemArray>, _: Ref<IBindCtx>) -> Result<()> {
-        let target = self.target.as_ref().ok_or_else(error)?;
+        let (to, action) = match &self.kind {
+            Kind::Format(item) => (Some(item.id.as_str()), None),
+            Kind::Action(item) => (None, Some(item.id.as_str())),
+            _ => return Err(error()),
+        };
         let paths = if items.is_some() {
             files(items)?
         } else {
@@ -340,9 +398,11 @@ impl IExplorerCommand_Impl for ExplorerCommand_Impl {
         if paths.is_empty() {
             return Err(error());
         }
-        handoff(&paths, target)?;
+        handoff(&paths, to, action)?;
         if !app_running() {
+            // Into the tray: the conversion says when it's done.
             Command::new(install_dir()?.join("scyconvert-app.exe"))
+                .arg("--minimized")
                 .creation_flags(CREATE_NO_WINDOW.0)
                 .stdin(Stdio::null())
                 .stdout(Stdio::null())
@@ -353,28 +413,18 @@ impl IExplorerCommand_Impl for ExplorerCommand_Impl {
         Ok(())
     }
     fn GetFlags(&self) -> Result<u32> {
-        Ok(if self.target.is_none() {
-            ECF_HASSUBCOMMANDS.0 as u32
-        } else {
-            0
+        Ok(match self.kind {
+            Kind::Root(_) => ECF_HASSUBCOMMANDS.0 as u32,
+            Kind::Separator => ECF_ISSEPARATOR.0 as u32,
+            _ => 0,
         })
     }
     fn EnumSubCommands(&self) -> Result<IEnumExplorerCommand> {
         let paths = self.selected_paths()?;
-        let lists: Vec<_> = paths.iter().map(|p| targets(p)).collect();
-        let targets = crate::common_targets(&lists);
-        let commands = targets
-            .iter()
-            .map(|target| {
-                ExplorerCommand {
-                    _lease: ModuleLease::new(),
-                    target: Some(target.clone()),
-                    site: Mutex::new(None),
-                    selection: Mutex::new(paths.clone()),
-                    children: Mutex::new(vec![]),
-                }
-                .into()
-            })
+        let commands = self
+            .children()?
+            .into_iter()
+            .map(|kind| ExplorerCommand::new(kind, paths.clone()).into())
             .collect();
         Ok(Enumerator {
             _lease: ModuleLease::new(),
@@ -453,6 +503,8 @@ impl IEnumExplorerCommand_Impl for Enumerator_Impl {
 #[implement(IClassFactory)]
 struct Factory {
     _lease: ModuleLease,
+    /// Which top-level menu this class makes, by index in `MENUS`.
+    menu: usize,
 }
 impl IClassFactory_Impl for Factory_Impl {
     fn CreateInstance(
@@ -470,7 +522,7 @@ impl IClassFactory_Impl for Factory_Impl {
         if outer.is_some() {
             return Err(Error::from_hresult(CLASS_E_NOAGGREGATION));
         }
-        let command: IExplorerCommand = ExplorerCommand::root().into();
+        let command: IExplorerCommand = ExplorerCommand::root(self.menu).into();
         unsafe { command.query(iid, out).ok() }
     }
     fn LockServer(&self, lock: BOOL) -> Result<()> {
@@ -497,11 +549,12 @@ unsafe extern "system" fn DllGetClassObject(
     }
     unsafe {
         *out = std::ptr::null_mut();
-        if *class != CLSID {
+        let Some(menu) = CLSIDS.iter().position(|c| *c == *class) else {
             return CLASS_E_CLASSNOTAVAILABLE;
-        }
+        };
         let factory: IClassFactory = Factory {
             _lease: ModuleLease::new(),
+            menu,
         }
         .into();
         factory.query(iid, out)

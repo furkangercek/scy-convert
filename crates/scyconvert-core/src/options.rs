@@ -48,6 +48,13 @@ pub struct Options {
     pub encoder_speed: Option<EncoderSpeed>,
     /// Target video bitrate in kbit/s. Replaces `quality` for video.
     pub video_bitrate: Option<u32>,
+    /// Aim for this share of the input's size, in percent: video and audio
+    /// bitrates come from the input's own. Replaces `quality` and
+    /// `video_bitrate`.
+    pub size_percent: Option<u8>,
+    /// Fail rather than keep an output that isn't smaller than its input.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub shrink_only: bool,
     /// Output frame rate.
     pub fps: Option<FrameRate>,
     /// 10-bit color, for HEVC, AV1, VP9 and ProRes.
@@ -123,6 +130,9 @@ impl Options {
         if self.dpi.is_some_and(|d| !(18..=1200).contains(&d)) {
             return bad("dpi must be between 18 and 1200");
         }
+        if self.size_percent.is_some_and(|p| !(5..=95).contains(&p)) {
+            return bad("the size target must be between 5% and 95%");
+        }
         if self
             .video_bitrate
             .is_some_and(|b| !(100..=500_000).contains(&b))
@@ -180,6 +190,8 @@ impl Options {
             hardware: self.hardware.or(base.hardware),
             encoder_speed: self.encoder_speed.or(base.encoder_speed),
             video_bitrate: self.video_bitrate.or(base.video_bitrate),
+            size_percent: self.size_percent.or(base.size_percent),
+            shrink_only: self.shrink_only || base.shrink_only,
             fps: self.fps.or(base.fps),
             ten_bit: self.ten_bit || base.ten_bit,
             crop: self.crop.or(base.crop),

@@ -20,18 +20,19 @@ $ErrorActionPreference = "Stop"
 $Root = Resolve-Path (Join-Path $PSScriptRoot "..\..")
 $PackageName = "Scyconvert.Desktop"
 $Subject = "CN=scyconvert"
-# The installer's classic verb. The package's verb also shows in the classic
-# menu, so LegacyDisable hides this one while the package is registered.
-$ClassicVerb = "HKCU:\Software\Classes\*\shell\scyconvert"
+# The installer's classic verbs. The package's verbs also show in the
+# classic menu, so LegacyDisable hides these while the package is registered.
+$ClassicVerbs = "scyconvert", "scyconvert.compress", "scyconvert.audio" |
+    ForEach-Object { "HKCU:\Software\Classes\*\shell\$_" }
 
 function Check($what) {
     if ($LASTEXITCODE -ne 0) { throw "$what failed (exit $LASTEXITCODE)" }
 }
 
-Get-AppxPackage -Name $PackageName | Remove-AppxPackage
 if ($Remove) {
-    if (Test-Path -LiteralPath $ClassicVerb) {
-        Remove-ItemProperty -LiteralPath $ClassicVerb -Name LegacyDisable -ErrorAction SilentlyContinue
+    Get-AppxPackage -Name $PackageName | Remove-AppxPackage
+    foreach ($verb in $ClassicVerbs | Where-Object { Test-Path -LiteralPath $_ }) {
+        Remove-ItemProperty -LiteralPath $verb -Name LegacyDisable -ErrorAction SilentlyContinue
     }
     Write-Host "Removed the compact menu package. The certificate stays in CurrentUser\My and LocalMachine\TrustedPeople."
     exit 0
@@ -88,11 +89,13 @@ $Msix = Join-Path $Work "scyconvert-menu.msix"
 & $MakeAppx pack /o /nv /d $Stage /p $Msix | Out-Null; Check "makeappx"
 & $SignTool sign /q /fd SHA256 /sha1 $Cert.Thumbprint /s My $Msix; Check "signtool"
 
+# Only now that the new package is built and signed does the old one go.
+Get-AppxPackage -Name $PackageName | Remove-AppxPackage
 Add-AppxPackage -Path $Msix -ExternalLocation $InstallDir
 $Package = Get-AppxPackage -Name $PackageName
 if (-not $Package) { throw "the package did not register" }
-if (Test-Path -LiteralPath $ClassicVerb) {
-    New-ItemProperty -LiteralPath $ClassicVerb -Name LegacyDisable -Value "" -Force | Out-Null
+foreach ($verb in $ClassicVerbs | Where-Object { Test-Path -LiteralPath $_ }) {
+    New-ItemProperty -LiteralPath $verb -Name LegacyDisable -Value "" -Force | Out-Null
 }
 Write-Host "Registered $($Package.PackageFullName). Restart Explorer to see the menu:"
 Write-Host "  Stop-Process -Name explorer"
