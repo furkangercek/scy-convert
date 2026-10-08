@@ -750,6 +750,13 @@ pub fn transparent_titlebar() -> bool {
     cfg!(target_os = "macos")
 }
 
+/// The switch for the status icon, named as each platform names its area.
+pub const MENU_BAR_ICON: &str = if cfg!(windows) {
+    "Tray icon"
+} else {
+    "Menu bar icon"
+};
+
 /// "this Mac" or "this computer", for copy that names the machine.
 pub fn this_machine() -> &'static str {
     if cfg!(target_os = "macos") {

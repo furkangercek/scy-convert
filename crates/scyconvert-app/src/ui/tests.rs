@@ -424,6 +424,17 @@ fn window_of<V: 'static>(cx: &mut TestAppContext) -> (AnyWindowHandle, Entity<V>
     cx.read(|cx| Open::<V>::get(cx).expect("the window is open"))
 }
 
+/// The window showing Settings: its own on macOS, the main window's
+/// Settings page elsewhere.
+fn settings_window(cx: &mut TestAppContext) -> AnyWindowHandle {
+    if super::SETTINGS_WINDOW {
+        return window_of::<SettingsView>(cx).0;
+    }
+    let (window, main) = window_of::<MainView>(cx);
+    cx.read(|cx| assert_eq!(main.read(cx).page, Page::Settings));
+    window
+}
+
 fn set_input(
     cx: &mut TestAppContext,
     window: AnyWindowHandle,
@@ -1009,9 +1020,10 @@ fn the_popover_converts_a_dropped_file_and_copies_it(cx: &mut TestAppContext) {
     cx.read(|cx| assert!(view.read(cx).drops[0].copied));
 
     click(cx, window, "open-settings");
-    window_of::<SettingsView>(cx);
+    settings_window(cx);
     click(cx, window, "open-scyconvert");
-    window_of::<MainView>(cx);
+    let (_, main) = window_of::<MainView>(cx);
+    cx.read(|cx| assert_eq!(main.read(cx).page, Page::Activity));
 }
 
 #[gpui_kit::test]
@@ -1518,7 +1530,7 @@ fn windows_fit_their_content_at_their_opening_sizes(cx: &mut TestAppContext) {
         assert!(fits(cx, quick, "convert"), "Quick convert, two files");
 
         cx.update(|cx| super::show_settings(SettingsTab::General, cx));
-        let (settings, _) = window_of::<SettingsView>(cx);
+        let settings = settings_window(cx);
         assert!(fits(cx, settings, "jobs"), "Settings");
 
         let (popover, _) = cx.update(super::open_popover).unwrap();

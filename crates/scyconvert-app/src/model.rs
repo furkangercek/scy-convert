@@ -808,7 +808,10 @@ impl AppState {
                 actions: Vec::new(),
             });
         }
-        if self.quit_when_idle && cx.windows().is_empty() && !self.settings.menu_bar_icon {
+        if self.quit_when_idle
+            && cx.windows().is_empty()
+            && !crate::tray::keeps_app_running(self.settings.menu_bar_icon, cx)
+        {
             cx.quit();
         }
     }

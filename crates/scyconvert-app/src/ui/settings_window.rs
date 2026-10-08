@@ -1,4 +1,5 @@
-//! The Settings window: General and Presets.
+//! Settings: General and Presets. A window on macOS, a page of the main
+//! window elsewhere.
 
 use gpui_kit::component::input::InputState;
 use gpui_kit::prelude::FluentBuilder;
@@ -234,6 +235,11 @@ impl SettingsView {
             move |_, _, cx| app.update(cx, |s, cx| s.update_settings(|s| s.menu_bar_icon = !on, cx))
         });
 
+        let starts = if cfg!(windows) && settings.menu_bar_icon {
+            "Starts in the tray"
+        } else {
+            "Starts minimized"
+        };
         let login = self.login.map(|on| {
             let weak = cx.entity().downgrade();
             let switch = theme::switch("open-at-login", on, false, p).on_click(move |_, _, cx| {
@@ -252,7 +258,7 @@ impl SettingsView {
                     .items_center()
                     .gap(px(14.))
                     .child(switch)
-                    .child(text(12., 16., p.tertiary).child("Starts minimized")),
+                    .child(text(12., 16., p.tertiary).child(starts)),
                 p,
             )
         });
@@ -350,7 +356,7 @@ impl SettingsView {
                     .children(finder)
                     .children(login)
                     .children(login_error.map(|e| text(12., 16., p.error).child(e)))
-                    .child(field("Menu bar icon", menu_bar, p))
+                    .child(field(theme::MENU_BAR_ICON, menu_bar, p))
                     .child(field(
                         "Jobs at once",
                         div()

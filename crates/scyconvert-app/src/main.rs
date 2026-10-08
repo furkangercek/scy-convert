@@ -11,6 +11,7 @@ mod clipboard;
 mod clock;
 mod finder;
 mod history;
+mod icon;
 mod instance;
 mod jobs;
 mod login;
@@ -96,7 +97,11 @@ fn run(primary: instance::Primary, first: Request) {
     #[cfg(unix)]
     ignore_hangup();
     let (tx, mut rx) = unbounded::<Request>();
-    let app = gpui_kit::application().with_assets(ui::assets());
+    // `last_window_closed` decides when to quit: GPUI's default on Windows
+    // would quit with the last window even while the tray icon shows.
+    let app = gpui_kit::application()
+        .with_assets(ui::assets())
+        .with_quit_mode(gpui_kit::QuitMode::Explicit);
     let urls = tx.clone();
     app.on_open_urls(move |links| {
         // The Finder extension's requests, and files opened with scyconvert.
@@ -125,6 +130,7 @@ fn run(primary: instance::Primary, first: Request) {
         #[cfg(target_os = "macos")]
         macos::init(&state, tx.clone(), cx);
         cx.set_global(Shared(state.clone()));
+        tray::install(cx);
         cx.on_window_closed(last_window_closed).detach();
 
         primary.listen(move |req| drop(tx.unbounded_send(req)));
@@ -146,17 +152,17 @@ fn run(primary: instance::Primary, first: Request) {
     thumbs::shutdown();
 }
 
-/// Quits with the last window, unless conversions are still running; then
-/// quits when they finish.
+/// Quits with the last window, unless the tray icon keeps the app running or
+/// conversions are still running; then quits when they finish.
 fn last_window_closed(cx: &mut App, _: gpui_kit::WindowId) {
     if !cx.windows().is_empty() {
         return;
     }
     let state = model::shared(cx);
-    let keep_running = cfg!(target_os = "macos") && state.read(cx).settings.menu_bar_icon;
+    let keep_running = tray::keeps_app_running(state.read(cx).settings.menu_bar_icon, cx);
     if keep_running {
-        // macOS keeps the process alive when the menu bar item is enabled.
-        // Calling cx.quit() from the window-closed observer starts GPUI's
+        // The tray icon (Windows) or the Dock (macOS) keeps the app alive.
+        // On macOS, calling cx.quit() from the window-closed observer starts GPUI's
         // teardown while AppKit is still unwinding the last NSWindow; a
         // deferred update callback can then cross that teardown boundary.
         return;

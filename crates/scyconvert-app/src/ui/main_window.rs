@@ -1,5 +1,6 @@
 //! The main window: Activity (running jobs and history in one list, plus
-//! Add files, which converts right away) and Automations.
+//! Add files, which converts right away), Automations and, outside macOS,
+//! Settings.
 
 use std::path::PathBuf;
 use std::time::Instant;
@@ -9,7 +10,7 @@ use gpui_kit::*;
 use scyconvert_core::{FORMATS, Format, format_by_extension, format_by_id};
 
 use super::theme::{self, Palette, mono, primary_button, text, text_button};
-use super::{SettingsTab, error_text, file_size, human_size, time_left};
+use super::{SettingsTab, SettingsView, error_text, file_size, human_size, time_left};
 use crate::automation;
 use crate::clock::Local;
 use crate::finder::EXTENSION_SETTINGS;
@@ -23,6 +24,7 @@ use crate::settings::Kind;
 pub enum Page {
     Activity,
     Automations,
+    Settings,
 }
 
 pub struct MainView {
@@ -32,6 +34,8 @@ pub struct MainView {
     pub(super) editing_defaults: bool,
     /// What the last Add files couldn't do.
     pub(super) error: Option<String>,
+    /// The Settings page, once opened.
+    pub(super) settings: Option<Entity<SettingsView>>,
     _observe: Subscription,
     _appearance: Subscription,
 }
@@ -45,7 +49,18 @@ impl MainView {
             page: Page::Activity,
             editing_defaults: false,
             error: None,
+            settings: None,
         }
+    }
+
+    pub fn show_settings(&mut self, tab: SettingsTab, window: &mut Window, cx: &mut Context<Self>) {
+        self.app.update(cx, |s, cx| s.refresh_pack(cx));
+        let app = self.app.clone();
+        let settings = self
+            .settings
+            .get_or_insert_with(|| cx.new(|cx| SettingsView::new(app, window, cx)));
+        settings.update(cx, |v, cx| v.set_tab(tab, cx));
+        self.set_page(Page::Settings, cx);
     }
 
     pub fn set_page(&mut self, page: Page, cx: &mut Context<Self>) {
@@ -142,8 +157,19 @@ impl MainView {
                         ),
                     )
                     .child(
-                        nav("nav-settings", "Settings", false, None)
-                            .on_click(|_, _, cx| super::show_settings(SettingsTab::General, cx)),
+                        nav(
+                            "nav-settings",
+                            "Settings",
+                            self.page == Page::Settings,
+                            None,
+                        )
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            if super::SETTINGS_WINDOW {
+                                super::show_settings(SettingsTab::General, cx);
+                            } else {
+                                this.show_settings(SettingsTab::General, window, cx);
+                            }
+                        })),
                     ),
             )
     }
@@ -737,6 +763,13 @@ impl Render for MainView {
                 .min_w_0()
                 .child(self.header("Automations", &p, cx))
                 .child(self.automations(&p, cx)),
+            Page::Settings => div()
+                .flex()
+                .flex_col()
+                .flex_1()
+                .min_w_0()
+                .child(self.header("Settings", &p, cx))
+                .child(div().flex_1().min_h_0().children(self.settings.clone())),
         };
         div()
             .id("main")

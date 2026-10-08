@@ -6322,6 +6322,7 @@ dependencies = [
  "image",
  "libc",
  "objc",
+ "raw-window-handle",
  "rusqlite",
  "scyconvert-core",
  "scyconvert-engines",

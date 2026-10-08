@@ -1,6 +1,7 @@
 //! Windows and the pieces they share. The main window lists activity; Quick
-//! convert opens for files sent without a target; Settings is its own
-//! window; the menu bar popover belongs to the tray.
+//! convert opens for files sent without a target; Settings is its own window
+//! on macOS and a page of the main window elsewhere; the menu bar popover
+//! belongs to the tray.
 
 mod main_window;
 mod pack;
@@ -63,6 +64,7 @@ fn show<V: Render>(
     cx.activate(true);
     match opened {
         Ok((handle, view)) => {
+            let _ = handle.update(cx, |_, window, _| crate::icon::apply(window));
             cx.set_global(Open(handle, view.downgrade()));
             Some((handle, view))
         }
@@ -81,7 +83,7 @@ fn show<V: Render>(
 pub fn route(request: Request, cx: &mut App) {
     let app = model::shared(cx);
     if request.files.is_empty() && request.minimized {
-        open_main_minimized(cx);
+        start_minimized(cx);
     } else if request.files.is_empty() {
         show_main(cx);
     } else if request.auto_start() {
@@ -106,9 +108,11 @@ pub fn show_main(cx: &mut App) {
     open_main(cx);
 }
 
+const MAIN_SIZE: Size<Pixels> = size(px(1040.), px(640.));
+
 fn open_main(cx: &mut App) -> Option<(AnyWindowHandle, Entity<MainView>)> {
     let app = model::shared(cx);
-    let opened = show(size(px(1040.), px(640.)), "scyconvert", cx, |window, cx| {
+    let opened = show(MAIN_SIZE, "scyconvert", cx, |window, cx| {
         cx.new(|cx| MainView::new(app, window, cx))
     });
     if let Some((handle, view)) = &opened {
@@ -120,18 +124,49 @@ fn open_main(cx: &mut App) -> Option<(AnyWindowHandle, Entity<MainView>)> {
     opened
 }
 
-/// Opens the main window minimized, as the login entry asks. A window that
-/// is already open is left as it is.
-fn open_main_minimized(cx: &mut App) {
-    if cx.windows().is_empty()
-        && let Some((handle, _)) = open_main(cx)
-    {
-        let _ = handle.update(cx, |_, window, _| window.minimize_window());
+/// What the login entry opens: nothing while the tray icon keeps the app
+/// running, else the main window minimized. A window that is already open is
+/// left as it is.
+fn start_minimized(cx: &mut App) {
+    let menu_bar_icon = model::shared(cx).read(cx).settings.menu_bar_icon;
+    if !cx.windows().is_empty() || crate::tray::keeps_app_running(menu_bar_icon, cx) {
+        return;
+    }
+    // Not `open_main`: activating the window restores it again after the
+    // minimize, once the activation runs on the next tick.
+    let app = model::shared(cx);
+    let options = WindowOptions {
+        focus: false,
+        ..window_options(MAIN_SIZE, "scyconvert", cx)
+    };
+    match gpui_kit::open_window(options, cx, |window, cx| {
+        cx.new(|cx| MainView::new(app, window, cx))
+    }) {
+        Ok((handle, view)) => {
+            let _ = handle.update(cx, |_, window, _| {
+                crate::icon::apply(window);
+                window.minimize_window();
+            });
+            cx.set_global(Open(handle, view.downgrade()));
+        }
+        Err(e) => tracing::error!(error = %e, "could not open the main window"),
     }
 }
 
+/// Settings opens as its own window on macOS, where apps have a Settings
+/// window; elsewhere it is a page of the main window.
+pub(crate) const SETTINGS_WINDOW: bool = cfg!(target_os = "macos");
+
 /// Opens Settings on `tab`.
 pub fn show_settings(tab: SettingsTab, cx: &mut App) {
+    if !SETTINGS_WINDOW {
+        if let Some((handle, view)) = open_main(cx) {
+            let _ = handle.update(cx, |_, window, cx| {
+                view.update(cx, |v, cx| v.show_settings(tab, window, cx))
+            });
+        }
+        return;
+    }
     let app = model::shared(cx);
     app.update(cx, |s, cx| s.refresh_pack(cx));
     if let Some((handle, view)) = show(size(px(620.), px(600.)), "Settings", cx, |window, cx| {
@@ -150,7 +185,10 @@ pub fn open_quick(request: Request, cx: &mut App) {
         cx.new(|cx| QuickView::new(app, request, window, cx))
     }) {
         // Each request gets its own window; the global tracks the newest.
-        Ok((handle, view)) => cx.set_global(Open(handle, view.downgrade())),
+        Ok((handle, view)) => {
+            let _ = handle.update(cx, |_, window, _| crate::icon::apply(window));
+            cx.set_global(Open(handle, view.downgrade()));
+        }
         Err(e) => tracing::error!(error = %e, "could not open Quick convert"),
     }
     cx.activate(true);
