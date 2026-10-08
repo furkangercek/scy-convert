@@ -64,7 +64,7 @@ Copy-Item (Join-Path $PdfiumDir "bin\pdfium.dll") $Payload
 Copy-Item (Join-Path $PdfiumDir "LICENSE") (Join-Path $Payload "licenses\PDFium.txt")
 
 Copy-Item (Join-Path $Root "LICENSE") (Join-Path $Payload "LICENSE.txt")
-$Icon = Join-Path $Root "packaging\icon.ico"
+$Icon = Join-Path $Root "packaging\icon\icon.ico"
 if (Test-Path $Icon) { Copy-Item $Icon (Join-Path $Payload "scyconvert.ico") }
 
 $Zip = Join-Path $Out "scyconvert-$Version-windows-x64.zip"

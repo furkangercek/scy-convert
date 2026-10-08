@@ -41,3 +41,6 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("cargo-cli
 gpui-kit = { workspace = true, features = ["test-support"] }
 image.workspace = true
 tempfile.workspace = true
+
+[build-dependencies]
+winresource = "0.1.31"

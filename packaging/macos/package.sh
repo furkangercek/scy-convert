@@ -86,12 +86,12 @@ appex="$contents/PlugIns/FinderSync.appex"
 mkdir -p "$appex/Contents/MacOS"
 xcrun --sdk macosx swiftc -O -target "$arch-apple-macos$min_macos" -sdk "$(xcrun --sdk macosx --show-sdk-path)"   -module-name ScyconvertFinderSync -parse-as-library -application-extension   -Xlinker -e -Xlinker _NSExtensionMain -framework FinderSync -framework Cocoa   "$ext_src/FinderSync.swift" -o "$appex/Contents/MacOS/FinderSync"
 fill "$ext_src/Info.plist" "$appex/Contents/Info.plist"
+mkdir -p "$appex/Contents/Resources"
+cp "$root/packaging/icon/MenuIconTemplate.png" "$root/packaging/icon/MenuIconTemplate@2x.png" "$appex/Contents/Resources/"
 
 fill "$here/Info.plist" "$contents/Info.plist"
 printf 'APPL????' > "$contents/PkgInfo"
-if [ -f "$root/packaging/icon.icns" ]; then
-  cp "$root/packaging/icon.icns" "$contents/Resources/scyconvert.icns"
-fi
+cp "$root/packaging/icon/icon.icns" "$contents/Resources/scyconvert.icns"
 
 # Ad-hoc signature, inside out. Apple Silicon refuses unsigned code.
 codesign --force --sign - --timestamp=none "$contents/Frameworks/libpdfium.dylib"
