@@ -8,7 +8,7 @@ Local file conversion for Windows and macOS: a Rust engine, a GPUI desktop app a
 - `crates/scyconvert-engines`: FFmpeg (subprocess), `image`, resvg, PDFium (dynamically loaded), LibreOffice (headless subprocess), HEIC via libheif or `sips` on macOS. `default_registry()` registers whatever runs on this machine.
 - `crates/scyconvert-cli`: the `scyconvert` binary. `scyconvert <files or folders> --to <fmt>` with options, `--preset`, `--json` progress, `-r` and `-j`; `formats`, `targets <file> [--menu]`, `engines`, `presets`, `pack`.
 - `crates/scyconvert-app`: the desktop app (`scyconvert-app`), built on GPUI through `gpui-kit`. Excluded from `default-members`; build it with `-p scyconvert-app`.
-- `crates/scyconvert-shell`: the Windows Explorer menu COM handler. Built, but no installer registers it yet (`integrations/windows`).
+- `crates/scyconvert-shell`: the Windows Explorer menu COM handler (`scyconvert_shell.dll`), registered per user by the installer (`integrations/windows`).
 - `integrations/macos`: the Finder Sync extension source. Not bundled: it needs a Developer ID signature.
 - `packaging/windows`: `package.ps1` builds the Inno Setup installer and portable zip.
 - `packaging/macos`: `package.sh <arch>` builds the ad-hoc signed `.app` and `.dmg`.

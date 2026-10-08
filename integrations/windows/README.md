@@ -1,6 +1,6 @@
 # Windows Explorer menu
 
-**Status: not shipped.** `crates/scyconvert-shell` builds a COM handler for **Convert with scyconvert**, but the installer does not register it yet. Windows 11's compact menu needs a signed sparse MSIX identity; Windows 10 and **Show more options** can use the same handler through classic HKCU registry verbs, which need no signature or administrator rights.
+The installer (`packaging/windows/scyconvert.iss`) adds **Convert with scyconvert** to Explorer's right-click menu for files when its Explorer menu task is checked. It registers `scyconvert_shell.dll` (the Rust `scyconvert-shell` COM handler) as a per-user COM server and points a classic `HKCU\Software\Classes\*\shell\scyconvert` verb at it through `ExplorerCommandHandler`. No signature or administrator rights are needed. On Windows 11 the entry is under **Show more options**: the compact menu needs a signed sparse MSIX identity, which this build does not have.
 
 The DLL asks the installed `scyconvert.exe targets <file> --menu` for targets. It keeps the first file's order and offers only targets shared by every selected file. Unsupported selections and folders have no menu. Probes run without a console, time out after two seconds, and cache each extension for 30 seconds. Installing or removing document support therefore refreshes the menu without restarting Explorer.
 

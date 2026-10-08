@@ -33,14 +33,15 @@ New-Item -ItemType Directory -Force $Out, $Cache | Out-Null
 if (-not $SkipBuild) {
     Push-Location $Root
     try {
-        cargo build --release --locked -p scyconvert-cli -p scyconvert-app; Check "cargo build"
+        cargo build --release --locked -p scyconvert-cli -p scyconvert-app -p scyconvert-shell; Check "cargo build"
     } finally { Pop-Location }
 }
 
 if (Test-Path $Payload) { Remove-Item -Recurse -Force $Payload }
 New-Item -ItemType Directory -Force (Join-Path $Payload "licenses") | Out-Null
 $Release = Join-Path $Root "target\release"
-Copy-Item (Join-Path $Release "scyconvert.exe"), (Join-Path $Release "scyconvert-app.exe") $Payload
+$Binaries = "scyconvert.exe", "scyconvert-app.exe", "scyconvert_shell.dll"
+Copy-Item ($Binaries | ForEach-Object { Join-Path $Release $_ }) $Payload
 
 $FfmpegZip = Join-Path $Cache "ffmpeg-win64-gpl-shared-9.0.zip"
 Fetch $FfmpegUrl $FfmpegZip

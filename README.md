@@ -10,7 +10,7 @@ Local file conversion for Windows and macOS. Drop files on the app or use the CL
 
 Download the latest build from [Releases](https://github.com/furkangercek/scy-convert/releases):
 
-- **Windows**: `scyconvert-<version>-windows-x64-setup.exe` installs for the current user (no admin rights) and can add the CLI to `PATH`. The `.zip` is the same files, portable.
+- **Windows**: `scyconvert-<version>-windows-x64-setup.exe` installs for the current user (no admin rights), adds **Convert with scyconvert** to the right-click menu for files (under **Show more options** on Windows 11) and can add the CLI to `PATH`. The `.zip` is the same files, portable, without the menu.
 - **macOS**: `scyconvert-<version>-macos-arm64.dmg` (Apple silicon) or `-x86_64.dmg` (Intel). The app is not notarized, so the first launch needs right-click > **Open**, or `xattr -dr com.apple.quarantine /Applications/scyconvert.app`.
 
 FFmpeg and PDFium are bundled. Word, Excel and PowerPoint files need [LibreOffice](https://www.libreoffice.org/download/) installed; scyconvert finds it in Program Files or `/Applications`.
