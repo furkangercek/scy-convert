@@ -26,23 +26,6 @@ pub struct Request {
     pub to: Option<String>,
     pub preset: Option<String>,
     pub source: Option<Source>,
-    /// A license key from `convt://activate?key=...`, shown in Settings for
-    /// the user to activate.
-    #[serde(default)]
-    pub license: Option<String>,
-    /// convt.app's answer to a sign-in the app started:
-    /// `convt://auth?state=...&code=...`, or `&error=...` when the user
-    /// cancelled. It counts only if the app holds a pending sign-in with
-    /// that state (see `AppState::finish_sign_in`).
-    #[serde(default)]
-    pub auth: Option<AuthReply>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AuthReply {
-    pub state: String,
-    /// The one-time code, or why there is none.
-    pub code: Result<String, String>,
 }
 
 impl Request {
@@ -61,8 +44,6 @@ pub const USAGE: &str = "\
 usage: convt-app [files...]
        convt-app open [--to <format>] [--preset <name>] [--] <files...>
        convt-app 'convt://convert?file=<path>&to=<format>&preset=<name>'
-       convt-app 'convt://activate?key=<license key>'
-       convt-app 'convt://auth?state=<state>&code=<code>'
 
 Opens the convt window. With --to, or a preset that names a format, the
 files convert in place right away and no window opens.";
@@ -147,64 +128,33 @@ fn check_format(id: &str) -> Result<(), String> {
         .ok_or_else(|| format!("unknown format {id:?} (see `convt formats`)"))
 }
 
-/// Parses `convt://convert?file=/a&file=/b&to=png&preset=web`,
-/// `convt://activate?key=...` and `convt://auth?state=...&code=...`. File
-/// paths must be absolute: a link has no working directory.
+/// Parses `convt://convert?file=/a&file=/b&to=png&preset=web`. File paths
+/// must be absolute: a link has no working directory.
 pub fn parse_url(url: &str) -> Result<Request, String> {
     let rest = url
         .strip_prefix("convt://")
         .or_else(|| url.strip_prefix("convt:"))
         .ok_or("not a convt:// link")?;
     let (action, query) = rest.split_once('?').unwrap_or((rest, ""));
-    let action = match action.trim_end_matches('/') {
-        "convert" => Action::Convert,
-        "activate" => Action::Activate,
-        "auth" => Action::Auth,
-        _ => return Err(format!("unknown convt:// action {action:?}")),
-    };
-    let activate = action == Action::Activate;
-    let convert = action == Action::Convert;
+    if action.trim_end_matches('/') != "convert" {
+        return Err(format!("unknown convt:// action {action:?}"));
+    }
     let mut req = Request {
         source: Some(Source::Url),
         ..Request::default()
     };
-    let (mut state, mut code, mut error) = (None, None, None);
     for pair in query.split('&').filter(|p| !p.is_empty()) {
         let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
         let value = percent_decode(value, true)?;
         match key {
-            "key" if activate => {
-                let text = String::from_utf8(value).map_err(|_| "key is not UTF-8".to_string())?;
-                req.license = Some(text.trim().to_string());
-            }
-            "state" | "code" | "error" if action == Action::Auth => {
-                let text = String::from_utf8(value).map_err(|_| format!("{key} is not UTF-8"))?;
-                // Values the site makes are short base64url or a word.
-                if text.is_empty()
-                    || text.len() > 128
-                    || !text
-                        .bytes()
-                        .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
-                {
-                    return Err(format!("the sign-in link has a malformed {key}"));
-                }
-                let slot = match key {
-                    "state" => &mut state,
-                    "code" => &mut code,
-                    _ => &mut error,
-                };
-                if slot.replace(text).is_some() {
-                    return Err(format!("the sign-in link has more than one {key}"));
-                }
-            }
-            "file" if convert => {
+            "file" => {
                 let path = PathBuf::from(bytes_to_os(value));
                 if !path.is_absolute() {
                     return Err(format!("{} is not an absolute path", path.display()));
                 }
                 req.files.push(path);
             }
-            "to" | "preset" if convert => {
+            "to" | "preset" => {
                 let text = String::from_utf8(value).map_err(|_| format!("{key} is not UTF-8"))?;
                 if key == "to" {
                     check_format(&text)?;
@@ -217,26 +167,7 @@ pub fn parse_url(url: &str) -> Result<Request, String> {
             _ => {}
         }
     }
-    if activate && req.license.as_deref().is_none_or(str::is_empty) {
-        return Err("the activate link has no key".into());
-    }
-    if action == Action::Auth {
-        let state = state.ok_or("the sign-in link has no state")?;
-        let code = match (code, error) {
-            (Some(code), None) => Ok(code),
-            (None, Some(error)) => Err(error),
-            _ => return Err("the sign-in link needs a code or an error".into()),
-        };
-        req.auth = Some(AuthReply { state, code });
-    }
     Ok(req)
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Action {
-    Convert,
-    Activate,
-    Auth,
 }
 
 /// Decodes `%XX` escapes. Query strings also encode spaces as `+`; paths in
@@ -382,51 +313,9 @@ mod tests {
         let link = format!("convt://convert?file={ROOT}/a.png");
         let via_args = parse_args(vec![link.into()], Path::new("/"));
         assert!(matches!(via_args, Ok(Command::Run(r)) if r.source == Some(Source::Url)));
-
-        let r = parse_url("convt://activate?key=abc.def-_&file=/a.png").unwrap();
-        assert_eq!(r.license.as_deref(), Some("abc.def-_"));
-        // An activate link carries nothing else.
-        assert!(r.files.is_empty());
-        assert!(parse_url("convt://activate").is_err());
-        assert!(parse_url("convt://activate?key=").is_err());
-        assert!(
-            parse_url("convt://convert?key=abc")
-                .unwrap()
-                .license
-                .is_none()
-        );
-
-        let r = parse_url("convt://auth?state=s_1-A&code=c0de&file=/a.png&to=png&key=k").unwrap();
-        assert_eq!(
-            r.auth,
-            Some(AuthReply {
-                state: "s_1-A".into(),
-                code: Ok("c0de".into())
-            })
-        );
-        // A sign-in reply never carries files, a target or a key.
-        assert!(r.files.is_empty() && r.to.is_none() && r.license.is_none() && !r.auto_start());
-        let r = parse_url("convt://auth?state=s&error=access_denied").unwrap();
-        assert_eq!(r.auth.unwrap().code, Err("access_denied".into()));
-        for bad in [
-            "convt://auth",
-            "convt://auth?code=c",
-            "convt://auth?state=s",
-            "convt://auth?state=s&code=c&error=e",
-            "convt://auth?state=s&state=t&code=c",
-            "convt://auth?state=s%20x&code=c",
-            "convt://auth?state=s&code=%3Cb%3E",
-            "convt://signin?email=a%40example.com",
-        ] {
-            assert!(parse_url(bad).is_err(), "{bad}");
+        for removed in ["convt://activate?key=abc", "convt://auth?state=s&code=c"] {
+            assert!(parse_url(removed).is_err(), "{removed}");
         }
-        assert!(parse_url(&format!("convt://auth?state={}&code=c", "s".repeat(129))).is_err());
-        assert!(
-            parse_url("convt://convert?state=s&code=c")
-                .unwrap()
-                .auth
-                .is_none()
-        );
     }
 
     #[cfg(unix)]

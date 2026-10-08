@@ -15,13 +15,11 @@ anyhow.workspace = true
 clap.workspace = true
 convt-core.workspace = true
 convt-engines.workspace = true
-convt-license = { workspace = true, features = ["client"] }
 ctrlc.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
 which.workspace = true
 libc.workspace = true
-ed25519-dalek.workspace = true
 image.workspace = true
 tempfile.workspace = true

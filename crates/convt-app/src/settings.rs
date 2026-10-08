@@ -22,20 +22,6 @@ pub struct Settings {
     pub reveal_when_done: bool,
     /// Show the menu bar (tray) icon where the platform has one.
     pub menu_bar_icon: bool,
-    /// The first-run window was finished (Start converting / Open convt).
-    /// Closing or quitting mid-setup leaves this false so the next launch
-    /// shows first run again.
-    pub first_run_done: bool,
-    /// The UTC day (`YYYY-MM-DD`) the app last asked convt.app for the
-    /// current Pro key, so launches renew at most once a day.
-    pub license_checked: Option<String>,
-    /// Check convt.app once a day for a newer build. On by default.
-    pub update_checks: bool,
-    /// The UTC day (`YYYY-MM-DD`) of the last update check.
-    pub update_checked: Option<String>,
-    /// The highest update manifest `sequence` accepted, so an older signed
-    /// manifest can't be replayed to hide a newer release.
-    pub update_sequence: u64,
     /// What Add files converts each kind of file to.
     pub defaults: Defaults,
     /// Automation rules. Each enabled rule watches one folder.
@@ -50,11 +36,6 @@ impl Default for Settings {
             notifications: true,
             reveal_when_done: false,
             menu_bar_icon: true,
-            first_run_done: false,
-            license_checked: None,
-            update_checks: true,
-            update_checked: None,
-            update_sequence: 0,
             defaults: Defaults::default(),
             automations: crate::placeholder::example_automations(),
         }
@@ -371,8 +352,6 @@ mod tests {
             output_dir: Some(dir.path().join("out dir")),
             concurrency: Some(2),
             notifications: false,
-            first_run_done: true,
-            license_checked: Some("2026-10-05".into()),
             ..Settings::default()
         };
         s.defaults.set(Kind::Images, format_by_id("webp").unwrap());
@@ -383,17 +362,20 @@ mod tests {
         assert_eq!(s.concurrency(), 2);
         assert!(matches!(s.output(), Output::Dir(_)));
 
-        // Unknown keys, such as `account` from before desktop sign-in, are ignored.
+        // Unknown keys are ignored, including the ones older versions wrote
+        // for first run, sign-in, license renewal and update checks.
         std::fs::write(
             &path,
-            "notifications = false\nfuture_key = 1\naccount = \"a@b.c\"\n",
+            "notifications = false\nfuture_key = 1\naccount = \"a@b.c\"\n\
+             first_run_done = true\nlicense_checked = \"2026-10-05\"\n\
+             update_checks = true\nupdate_checked = \"2026-10-05\"\nupdate_sequence = 7\n",
         )
         .unwrap();
         let s = Settings::load(&path).unwrap();
         assert!(!s.notifications && s.output_dir.is_none());
         assert!(matches!(s.output(), Output::Beside));
         assert_eq!(s.defaults, Defaults::default());
-        assert!(!s.first_run_done && s.menu_bar_icon);
+        assert!(s.menu_bar_icon);
         assert_eq!(Settings::default().concurrency(), auto_concurrency());
 
         std::fs::write(&path, "concurrency = \"lots\"").unwrap();

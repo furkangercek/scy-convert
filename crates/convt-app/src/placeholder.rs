@@ -1,14 +1,8 @@
-//! Placeholder values. Nothing here is real yet except the example
-//! automation rules, which a fresh install stores and the automation
-//! engine now runs. The update manifest URL still waits for the release
-//! host. Keep every such value in this module so it is easy to find.
+//! Placeholder values: the example automation rules, which a fresh install
+//! stores and the automation engine runs. Keep every such value in this
+//! module so it is easy to find.
 
 use crate::settings::{Automation, WatchKind};
-
-/// Where the signed update manifest lives. Placeholder: nothing is published
-/// there yet (P11 sets up the release host). Builds from source can point at a
-/// local server with `CONVT_UPDATE_URL`.
-pub const UPDATE_MANIFEST_URL: &str = "https://convt.app/updates/manifest.json";
 
 /// Example rules a fresh install lists under Automations. Existing
 /// `settings.toml` files keep the rules they already saved.

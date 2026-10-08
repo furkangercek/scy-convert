@@ -8,7 +8,6 @@ use convt_core::{
     Background, Cancel, Category, Event, FORMATS, Job, Options, Output, PageRange, Preset,
     VideoCodec, expand_inputs, format_by_extension, format_by_id, run_batch,
 };
-use convt_license::client::{Config, Licensing};
 use serde_json::json;
 
 #[derive(Parser)]
@@ -94,11 +93,6 @@ enum Cmd {
     Pack {
         #[command(subcommand)]
         action: PackCmd,
-    },
-    /// Show this machine's license, or add or remove one
-    License {
-        #[command(subcommand)]
-        action: Option<LicenseCmd>,
     },
 }
 
@@ -196,47 +190,6 @@ fn pack(action: PackCmd) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[derive(Subcommand)]
-enum LicenseCmd {
-    /// Show the license or trial status (the default)
-    Status,
-    /// Add a license key. Without KEY, reads it from standard input.
-    Activate { key: Option<String> },
-    /// Remove the license from this machine
-    Remove,
-}
-
-fn licensing() -> Licensing {
-    use convt_engines::paths;
-    Licensing::new(Config::from_env(paths::config_dir(), paths::data_dir()))
-}
-
-fn license(action: LicenseCmd) -> anyhow::Result<()> {
-    let mut licensing = licensing();
-    match action {
-        LicenseCmd::Status => println!("{}", licensing.state().summary()),
-        LicenseCmd::Activate { key } => {
-            if !licensing.enforced() {
-                println!("{}", licensing.state().summary());
-                return Ok(());
-            }
-            let key = match key {
-                Some(key) => key,
-                None => std::io::read_to_string(std::io::stdin())?,
-            };
-            licensing.activate(&key)?;
-            println!("{}", licensing.state().summary());
-        }
-        LicenseCmd::Remove => {
-            licensing
-                .deactivate()
-                .map_err(|e| anyhow::anyhow!("could not remove the license: {e}"))?;
-            println!("Removed the license from this machine.");
-        }
-    }
-    Ok(())
-}
-
 fn load_preset(name: &str) -> anyhow::Result<Preset> {
     let path = Path::new(name);
     if path.extension().is_some_and(|e| e == "toml") || name.contains(std::path::MAIN_SEPARATOR) {
@@ -312,7 +265,6 @@ fn main() -> anyhow::Result<()> {
             }
         }
         Some(Cmd::Pack { action }) => pack(action)?,
-        Some(Cmd::License { action }) => license(action.unwrap_or(LicenseCmd::Status))?,
         None => return convert(cli, &registry),
     }
     Ok(())
@@ -383,9 +335,6 @@ fn convert(cli: Cli, registry: &convt_core::Registry) -> anyhow::Result<()> {
         .collect::<anyhow::Result<_>>()?;
     if jobs.is_empty() {
         bail!("nothing in those folders converts to {}", to.id);
-    }
-    if let Err(blocked) = licensing().begin_conversion() {
-        bail!("{blocked}");
     }
 
     let cancel = Cancel::new();

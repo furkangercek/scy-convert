@@ -1,9 +1,7 @@
 //! Windows and the pieces they share. The main window lists activity; Quick
-//! convert opens for files sent without a target; Settings and the first-run
-//! window are their own windows; the menu bar popover belongs to the tray.
+//! convert opens for files sent without a target; Settings is its own
+//! window; the menu bar popover belongs to the tray.
 
-mod account;
-mod first_run;
 mod main_window;
 mod pack;
 mod popover;
@@ -12,15 +10,12 @@ mod settings_window;
 #[cfg(test)]
 mod tests;
 pub mod theme;
-mod update;
 
 use std::path::{Path, PathBuf};
 
 use convt_core::Preset;
-use convt_license::client::{BUY_URL, DOWNLOAD_URL, State};
 use gpui_kit::*;
 
-pub use first_run::FirstRunView;
 pub use main_window::MainView;
 pub use popover::PopoverView;
 pub use quick::QuickView;
@@ -36,9 +31,6 @@ use theme::Palette;
 pub fn assets() -> gpui_kit::assets::Assets {
     gpui_kit::assets::Assets
 }
-
-/// The license price quoted in the trial card and the first-run window.
-pub const LICENSE_PRICE: &str = "$29";
 
 /// An open window of one kind, if any.
 struct Open<V: 'static>(AnyWindowHandle, WeakEntity<V>);
@@ -83,25 +75,12 @@ fn show<V: Render>(
 
 /// Sends a request where it belongs:
 ///
-/// - A sign-in reply finishes the sign-in the app started, if it did, and
-///   brings back the window that started it: first run, or the License tab.
-/// - A license key opens the License tab of Settings.
 /// - Files with a target, from the command line or the Finder menu, convert
 ///   in place with no window. Links never do: any web page can open one.
 /// - Other files open Quick convert, and no files open the main window.
 pub fn route(request: Request, cx: &mut App) {
     let app = model::shared(cx);
-    if let Some(reply) = request.auth {
-        // A link the app didn't ask for is dropped inside; the window that
-        // comes forward says so.
-        let _ = app.update(cx, |s, cx| s.finish_sign_in(reply, cx));
-        match Open::<FirstRunView>::get(cx) {
-            Some((handle, _)) if handle.update(cx, |_, w, _| w.activate_window()).is_ok() => {}
-            _ => show_settings(SettingsTab::License, cx),
-        }
-    } else if request.license.is_some() {
-        show_license(request.license, cx);
-    } else if request.files.is_empty() {
+    if request.files.is_empty() {
         show_main(cx);
     } else if request.auto_start() {
         // Silent conversions never download: a document that needs the pack
@@ -120,21 +99,9 @@ pub fn route(request: Request, cx: &mut App) {
     }
 }
 
-/// Opens the main window, or the first-run window until a licensed build
-/// finishes it. Closing mid-setup leaves first run unfinished, so the next
-/// launch shows it again. A build from source that doesn't check licenses
-/// never shows the first-run window.
+/// Opens the main window.
 pub fn show_main(cx: &mut App) {
-    let app = model::shared(cx);
-    let first_run = {
-        let state = app.read(cx);
-        state.license_enforced() && !state.settings.first_run_done
-    };
-    if first_run {
-        open_first_run(cx);
-    } else {
-        open_main(cx);
-    }
+    open_main(cx);
 }
 
 fn open_main(cx: &mut App) -> Option<(AnyWindowHandle, Entity<MainView>)> {
@@ -151,16 +118,6 @@ fn open_main(cx: &mut App) -> Option<(AnyWindowHandle, Entity<MainView>)> {
     opened
 }
 
-fn open_first_run(cx: &mut App) {
-    let app = model::shared(cx);
-    show(
-        size(px(420.), px(420.)),
-        "Welcome to convt",
-        cx,
-        |window, cx| cx.new(|cx| FirstRunView::new(app, first_run::first_step(), window, cx)),
-    );
-}
-
 /// Opens Settings on `tab`.
 pub fn show_settings(tab: SettingsTab, cx: &mut App) {
     let app = model::shared(cx);
@@ -169,17 +126,6 @@ pub fn show_settings(tab: SettingsTab, cx: &mut App) {
         cx.new(|cx| SettingsView::new(app, window, cx))
     }) {
         let _ = handle.update(cx, |_, _, cx| view.update(cx, |v, cx| v.set_tab(tab, cx)));
-    }
-}
-
-/// Opens the License tab of Settings, with `key` filled in. Keys from links
-/// are never activated without a click: any web page can open one.
-pub fn show_license(key: Option<String>, cx: &mut App) {
-    show_settings(SettingsTab::License, cx);
-    if let Some((handle, view)) = Open::<SettingsView>::get(cx) {
-        let _ = handle.update(cx, |_, window, cx| {
-            view.update(cx, |view, cx| view.fill_license(key, window, cx))
-        });
     }
 }
 
@@ -288,48 +234,6 @@ fn error_text(message: impl Into<SharedString>, p: &Palette) -> impl IntoElement
         .line_height(px(16.))
         .text_color(p.error)
         .child(message)
-}
-
-/// Why conversions stopped, with what the user can do about it. Nothing
-/// while conversions are allowed.
-fn blocked_banner(state: &State, p: &Palette) -> Option<impl IntoElement + use<>> {
-    let reason = SharedString::from(state.blocked_reason()?);
-    let buy = if matches!(state, State::NotCovered(_)) {
-        "Renew"
-    } else {
-        "Buy a license"
-    };
-    let download = matches!(state, State::NotCovered(_)).then(|| {
-        theme::text_button("download", "Download a covered build", p.green, 12.)
-            .on_click(|_, _, cx| cx.open_url(DOWNLOAD_URL))
-    });
-    Some(
-        div()
-            .flex()
-            .flex_col()
-            .gap(px(6.))
-            .child(
-                div()
-                    .id("license-banner")
-                    .test_support()
-                    .aria_label(reason.clone())
-                    .child(theme::text(12., 16., p.error).child(reason)),
-            )
-            .child(
-                div()
-                    .flex()
-                    .gap(px(14.))
-                    .children(download)
-                    .child(
-                        theme::text_button("buy", buy, p.green, 12.)
-                            .on_click(|_, _, cx| cx.open_url(BUY_URL)),
-                    )
-                    .child(
-                        theme::text_button("enter-license", "Enter license", p.text, 12.)
-                            .on_click(|_, _, cx| show_license(None, cx)),
-                    ),
-            ),
-    )
 }
 
 /// "1.9 MB", "214 KB".

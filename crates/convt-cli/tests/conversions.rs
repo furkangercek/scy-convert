@@ -9,10 +9,8 @@ use serde_json::Value;
 
 fn cli(root: &Path, args: &[&std::ffi::OsStr]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_convt"))
-        .env("CONVT_LICENSE_STORE", "file")
         .env("CONVT_CONFIG_DIR", root.join("config"))
         .env("CONVT_DATA_DIR", root.join("data"))
-        .env_remove("CONVT_LICENSE_ENFORCE")
         .args(args)
         .output()
         .unwrap()

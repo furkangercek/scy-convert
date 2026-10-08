@@ -5,12 +5,11 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use convt_core::{FORMATS, Format, format_by_extension, format_by_id};
-use convt_license::client::{BUY_URL, State, TRIAL_DAYS};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 
 use super::theme::{self, Palette, mono, primary_button, text, text_button};
-use super::{LICENSE_PRICE, SettingsTab, error_text, file_size, human_size, time_left};
+use super::{SettingsTab, error_text, file_size, human_size, time_left};
 use crate::automation;
 use crate::clock::Local;
 use crate::finder::EXTENSION_SETTINGS;
@@ -84,7 +83,6 @@ impl MainView {
     fn sidebar(&self, p: &Palette, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let state = self.app.read(cx);
         let active = state.queue.active();
-        let license = state.license.clone();
         let nav = |id: &'static str, label: &'static str, selected: bool, count: Option<usize>| {
             theme::clickable(id, label)
                 .aria_selected(selected)
@@ -148,9 +146,6 @@ impl MainView {
                             .on_click(|_, _, cx| super::show_settings(SettingsTab::General, cx)),
                     ),
             )
-            .child(div().flex_1())
-            .children(super::update::sidebar_card(&self.app, p, cx))
-            .children(trial_card(&license, p))
     }
 
     fn header(&self, title: &'static str, p: &Palette, cx: &mut Context<Self>) -> Div {
@@ -486,8 +481,7 @@ fn choices_for(registry: &convt_core::Registry, kind: Kind) -> Vec<&'static Form
         .collect()
 }
 
-/// Shown on Activity until the Finder extension is on, so skipping or
-/// closing first run still has a way back.
+/// Shown on Activity until the Finder extension is on.
 fn finder_setup_card(p: &Palette) -> impl IntoElement {
     div()
         .id("finder-setup")
@@ -518,71 +512,6 @@ fn finder_setup_card(p: &Palette) -> impl IntoElement {
                     .on_click(|_, _, cx| cx.open_url(EXTENSION_SETTINGS)),
             ),
         )
-}
-
-/// The trial or license card at the bottom of the sidebar. Nothing once
-/// licensed or in a build that doesn't check licenses.
-fn trial_card(state: &State, p: &Palette) -> Option<impl IntoElement + use<>> {
-    let (title, left, used, color, link) = match state {
-        State::Unrestricted | State::Licensed(_) => return None,
-        State::Trial { started: None, .. } => (
-            "Trial",
-            format!("{TRIAL_DAYS} days"),
-            0.,
-            p.green,
-            format!("Buy license · {LICENSE_PRICE}"),
-        ),
-        State::Trial { days_left, .. } => (
-            "Trial",
-            match days_left {
-                1 => "1 day left".to_string(),
-                n => format!("{n} days left"),
-            },
-            (TRIAL_DAYS - days_left) as f32 / TRIAL_DAYS as f32,
-            p.green,
-            format!("Buy license · {LICENSE_PRICE}"),
-        ),
-        State::TrialEnded => (
-            "Trial ended",
-            "0 days left".into(),
-            1.,
-            p.error,
-            format!("Buy license · {LICENSE_PRICE}"),
-        ),
-        State::NotCovered(_) => ("Updates ended", String::new(), 1., p.error, "Renew".into()),
-    };
-    Some(
-        div()
-            .id("trial-card")
-            .test_support()
-            .aria_label(SharedString::from(state.summary()))
-            .flex()
-            .flex_col()
-            .gap(px(8.))
-            .p(px(12.))
-            .rounded(px(8.))
-            .bg(p.trial_card)
-            .border_1()
-            .border_color(p.chrome_border)
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .child(
-                        text(12., 16., p.text)
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .child(title),
-                    )
-                    .child(mono(11., 14., p.secondary).child(left)),
-            )
-            .child(theme::progress(used, p.track, color))
-            .child(
-                text_button("trial-buy", link, p.green, 12.)
-                    .font_weight(FontWeight::MEDIUM)
-                    .on_click(|_, _, cx| cx.open_url(BUY_URL)),
-            ),
-    )
 }
 
 /// The file name with the target, "interview.mov → MP4".

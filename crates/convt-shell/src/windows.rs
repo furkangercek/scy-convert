@@ -118,8 +118,6 @@ struct ExplorerRequest<'a> {
     to: Option<&'a str>,
     preset: Option<&'a str>,
     source: &'static str,
-    license: Option<&'static str>,
-    auth: Option<()>,
 }
 
 fn request_dir() -> PathBuf {
@@ -143,8 +141,6 @@ fn handoff(paths: &[PathBuf], target: &str) -> Result<()> {
         to: Some(target),
         preset: None,
         source: "Cli",
-        license: None,
-        auth: None,
     };
     let bytes = serde_json::to_vec(&request).map_err(|_| error())?;
     let temp = dir.join(format!("request-{id}.tmp"));

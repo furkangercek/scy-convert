@@ -1,7 +1,6 @@
-//! The Settings window: General, Presets and License.
+//! The Settings window: General and Presets.
 
 use convt_core::{FORMATS, Format, Options, Preset, format_by_id};
-use convt_license::client::{BUY_URL, State};
 use gpui_kit::component::input::InputState;
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
@@ -18,13 +17,11 @@ use crate::settings::{Settings, auto_concurrency};
 pub enum SettingsTab {
     General,
     Presets,
-    License,
 }
 
-const TABS: [(SettingsTab, &str, &str); 3] = [
+const TABS: [(SettingsTab, &str, &str); 2] = [
     (SettingsTab::General, "tab-general", "General"),
     (SettingsTab::Presets, "tab-presets", "Presets"),
-    (SettingsTab::License, "tab-license", "License"),
 ];
 
 /// The dropdown that is open, if any.
@@ -47,10 +44,6 @@ pub struct SettingsView {
     pub(super) preset_error: Option<String>,
     /// The preset loaded into the form, if the user is editing one.
     pub(super) editing: Option<String>,
-    pub(super) license_key: Entity<InputState>,
-    pub(super) license_error: Option<String>,
-    /// What the last license action did, such as "License activated".
-    pub(super) license_notice: Option<String>,
     /// Remove was clicked once under Documents; the row asks again.
     pub(super) confirm_remove_pack: bool,
     _observe: Subscription,
@@ -84,9 +77,6 @@ impl SettingsView {
             preset_to: None,
             preset_error: None,
             editing: None,
-            license_key: input("License key", window, cx),
-            license_error: None,
-            license_notice: None,
             confirm_remove_pack: false,
         }
     }
@@ -97,69 +87,8 @@ impl SettingsView {
         cx.notify();
     }
 
-    /// Shows the License tab, filling in `key` if given.
-    pub fn fill_license(
-        &mut self,
-        key: Option<String>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.tab = SettingsTab::License;
-        if let Some(key) = key {
-            self.license_key
-                .update(cx, |s, cx| s.set_value(key, window, cx));
-            self.license_error = None;
-            self.license_notice = None;
-        }
-        cx.notify();
-    }
-
     fn change(&self, change: impl FnOnce(&mut Settings), cx: &mut Context<Self>) {
         self.app.update(cx, |s, cx| s.update_settings(change, cx));
-    }
-
-    pub(super) fn activate_license(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let key = self.license_key.read(cx).value().trim().to_string();
-        if key.is_empty() {
-            self.license_error = Some("Paste your license key first.".into());
-            self.license_notice = None;
-            cx.notify();
-            return;
-        }
-        match self.app.update(cx, |s, cx| s.activate(&key, cx)) {
-            Ok(license) => {
-                self.license_error = None;
-                // A key whose updates ended before this build is kept, but
-                // the status above says it can't convert here.
-                let allowed = self.app.read(cx).license.allows_conversion();
-                self.license_notice = Some(if allowed {
-                    format!("License activated for {}.", license.email)
-                } else {
-                    format!("Saved the license for {}.", license.email)
-                });
-                self.license_key
-                    .update(cx, |s, cx| s.set_value("", window, cx));
-            }
-            Err(e) => {
-                self.license_error = Some(e);
-                self.license_notice = None;
-            }
-        }
-        cx.notify();
-    }
-
-    pub(super) fn remove_license(&mut self, cx: &mut Context<Self>) {
-        match self.app.update(cx, |s, cx| s.deactivate(cx)) {
-            Ok(()) => {
-                self.license_error = None;
-                self.license_notice = Some("Removed the license from this machine.".into());
-            }
-            Err(e) => {
-                self.license_error = Some(format!("The license couldn't be removed: {e}"));
-                self.license_notice = None;
-            }
-        }
-        cx.notify();
     }
 
     fn choose_output(&mut self, cx: &mut Context<Self>) {
@@ -434,11 +363,6 @@ impl SettingsView {
                     .pb(px(28.))
                     .border_t_1()
                     .border_color(p.hairline)
-                    .child(field_top(
-                        "Update checks",
-                        super::update::settings_row(&self.app, p, cx),
-                        p,
-                    ))
                     .child(field_top("Network", network(p), p)),
             )
     }
@@ -598,106 +522,6 @@ impl SettingsView {
             .child(form)
     }
 
-    fn license(&self, p: &Palette, cx: &mut Context<Self>) -> Div {
-        let state = self.app.read(cx).license.clone();
-        let summary = SharedString::from(state.summary());
-        let status = div()
-            .id("license-status")
-            .test_support()
-            .aria_label(summary.clone())
-            .child(
-                text(
-                    13.,
-                    19.,
-                    if state.allows_conversion() {
-                        p.text
-                    } else {
-                        p.error
-                    },
-                )
-                .child(summary),
-            );
-        let body = div()
-            .flex()
-            .flex_col()
-            .gap(px(14.))
-            .px(px(40.))
-            .pt(px(28.))
-            .pb(px(30.));
-        let account = super::account::section(&self.app, p, cx);
-        if state == State::Unrestricted {
-            return div()
-                .flex()
-                .flex_col()
-                .child(body.child(status))
-                .child(account);
-        }
-        let licensed = matches!(state, State::Licensed(_) | State::NotCovered(_));
-        let notice = self.license_notice.clone().map(|message| {
-            div()
-                .id("license-notice")
-                .test_support()
-                .aria_label(SharedString::from(message.clone()))
-                .child(
-                    text(
-                        12.,
-                        16.,
-                        if state.allows_conversion() {
-                            p.green
-                        } else {
-                            p.secondary
-                        },
-                    )
-                    .child(message),
-                )
-        });
-        let license = body
-            .child(status)
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(10.))
-                    .child(
-                        div()
-                            .flex_1()
-                            .child(theme::field(&self.license_key, "license-key")),
-                    )
-                    .child(primary_button("activate", "Activate", 13., false).on_click(
-                        cx.listener(|this, _, window, cx| this.activate_license(window, cx)),
-                    )),
-            )
-            .children(notice)
-            .children(self.license_error.clone().map(|e| error_text(e, p)))
-            .child(
-                div()
-                    .flex()
-                    .gap(px(14.))
-                    .when(!matches!(state, State::Licensed(_)), |row| {
-                        row.child(
-                            text_button(
-                                "settings-buy",
-                                if matches!(state, State::NotCovered(_)) {
-                                    "Renew"
-                                } else {
-                                    "Buy a license"
-                                },
-                                p.green,
-                                12.,
-                            )
-                            .on_click(|_, _, cx| cx.open_url(BUY_URL)),
-                        )
-                    })
-                    .when(licensed, |row| {
-                        row.child(
-                            text_button("remove-license", "Remove license", p.secondary, 12.)
-                                .on_click(cx.listener(|this, _, _, cx| this.remove_license(cx))),
-                        )
-                    }),
-            );
-        div().flex().flex_col().child(license).child(account)
-    }
-
     fn save_preset(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let name = self.preset_name.read(cx).value().trim().to_string();
         let state = self.app.read(cx);
@@ -779,42 +603,18 @@ impl SettingsView {
     }
 }
 
-/// What reaches the network without a click, for the General tab. Update
-/// checks and license refresh are listed together, as the privacy policy
-/// lists them.
-pub(super) const NETWORK_LINES: [(&str, &str); 3] = [
-    (
-        "network-updates",
-        "Update checks: while they're on, once a day at launch and when you click Check now, \
-         convt downloads the signed list of releases from convt.app. The request carries the \
-         app version and nothing about your files.",
-    ),
-    (
-        "network-refresh",
-        "License refresh: only while you're signed in to convt.app, once a day at launch, \
-         to fetch your current Pro key. See License.",
-    ),
-    (
-        "network-other",
-        "Anything else, such as downloading document support, waits for your click. \
-         Your files never leave this computer.",
-    ),
-];
+/// What reaches the network, for the General tab.
+pub(super) const NETWORK_NOTE: &str = "convt makes no network requests by itself. \
+     Downloading document support waits for your click. Your files never leave this computer.";
 
 fn network(p: &Palette) -> Div {
-    div()
-        .flex()
-        .flex_col()
-        .flex_1()
-        .min_w(px(0.))
-        .gap(px(6.))
-        .children(NETWORK_LINES.iter().map(|&(id, line)| {
-            div()
-                .id(id)
-                .test_support()
-                .aria_label(line)
-                .child(text(12., 17., p.secondary).child(line))
-        }))
+    div().flex_1().min_w(px(0.)).child(
+        div()
+            .id("network")
+            .test_support()
+            .aria_label(NETWORK_NOTE)
+            .child(text(12., 17., p.secondary).child(NETWORK_NOTE)),
+    )
 }
 
 /// A right-aligned label and its control, as in the design's settings rows.
@@ -896,7 +696,6 @@ impl Render for SettingsView {
         let body = match self.tab {
             SettingsTab::General => self.general(&p, cx),
             SettingsTab::Presets => self.presets(&p, cx),
-            SettingsTab::License => self.license(&p, cx),
         };
         div()
             .id("settings")

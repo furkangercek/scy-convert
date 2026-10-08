@@ -1,8 +1,6 @@
 # Rust
 /target
 # Env
-# Development license keys (cargo run -p convt-license --example dev-keys)
-/.convt-dev
 .env
 .env.*
 !.env.example

@@ -10,7 +10,6 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use convt_core::format_by_id;
-use convt_license::client::State;
 use gpui_kit::component::{Icon, IconName};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
@@ -359,25 +358,11 @@ fn job_row(entry: &Entry, now: Instant, p: &Palette) -> Div {
         )
 }
 
-/// "Trial · 5 days left", for the footer.
-fn license_line(state: &State) -> Option<String> {
-    match state {
-        State::Unrestricted => None,
-        State::Trial { started: None, .. } => Some("Trial · 7 days".into()),
-        State::Trial { days_left: 1, .. } => Some("Trial · last day".into()),
-        State::Trial { days_left, .. } => Some(format!("Trial · {days_left} days left")),
-        State::TrialEnded => Some("Trial ended".into()),
-        State::Licensed(_) => Some("Licensed".into()),
-        State::NotCovered(_) => Some("Updates ended".into()),
-    }
-}
-
 impl Render for PopoverView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = theme::palette(cx);
         let state = self.app.read(cx);
         let active = state.queue.active();
-        let license = license_line(&state.license);
         let drop_bar = div()
             .id("drop-bar")
             .test_support()
@@ -445,13 +430,12 @@ impl Render for PopoverView {
                     .flex()
                     .flex_shrink_0()
                     .items_center()
-                    .justify_between()
+                    .justify_end()
                     .px(px(16.))
                     .py(px(10.))
                     .bg(p.popover_footer)
                     .border_t_1()
                     .border_color(p.popover_hairline)
-                    .child(text(12., 16., p.secondary).child(license.unwrap_or_default()))
                     .child(
                         div()
                             .flex()

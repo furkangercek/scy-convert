@@ -17,7 +17,7 @@ use gpui_kit::*;
 use super::theme::{
     self, Choice, Palette, mono, primary_button, secondary_button, text, text_button,
 };
-use super::{blocked_banner, error_text, file_size, human_size, time_left};
+use super::{error_text, file_size, human_size, time_left};
 use crate::jobs::{Entry, JobId, Status};
 use crate::model::{self, AppState, PackPhase, Targets};
 use crate::pack;
@@ -346,12 +346,7 @@ impl QuickView {
         let jobs = match queued {
             Ok(jobs) => jobs,
             Err(e) => {
-                // When the license state stops conversions, the banner says
-                // why; anything else (such as a trial that couldn't be
-                // recorded) is shown here.
-                if self.app.read(cx).license.allows_conversion() {
-                    self.error = Some(e);
-                }
+                self.error = Some(e);
                 cx.notify();
                 return;
             }
@@ -937,9 +932,7 @@ impl QuickView {
                         .on_click(|_, window, _| window.remove_window()),
                 );
         }
-        let state = self.app.read(cx);
-        let disabled =
-            self.to.is_none() || self.supported().is_empty() || !state.license.allows_conversion();
+        let disabled = self.to.is_none() || self.supported().is_empty();
         let count = match self.supported().len() {
             0 | 1 => String::new(),
             n => format!("{n} files · "),
@@ -1173,7 +1166,6 @@ impl Render for QuickView {
             self.error
                 .clone()
                 .map(|e| error_text(e, &p).into_any_element()),
-            blocked_banner(&self.app.read(cx).license, &p).map(IntoElement::into_any_element),
         ]
         .into_iter()
         .flatten()

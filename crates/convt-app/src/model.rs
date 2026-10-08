@@ -11,20 +11,15 @@ use convt_core::{
     Format, Job, Options, Output, Preset, Registry, expand_inputs, format_by_extension,
     format_by_id,
 };
-use convt_license::License;
-use convt_license::account::{self, Api};
-use convt_license::client::{self, Licensing};
 use futures::StreamExt;
 use futures::channel::mpsc::unbounded;
 use gpui_kit::{App, Context, Entity, Global, SharedString, SystemNotification, Task};
 
-use crate::account::Account;
 use crate::history::{History, Outcome, Record, Setup};
 use crate::jobs::{Entry, JobId, Queue, Runner, Status};
 use crate::pack::{self, Failure};
 use crate::request::Request;
 use crate::settings::{Kind, Settings, write_atomic};
-use crate::update::{Update, UpdateConfig};
 
 /// How many rows the History tab shows.
 const RECENT: usize = 200;
@@ -36,15 +31,6 @@ pub struct Paths {
     /// `None` keeps history in memory only.
     pub history: Option<PathBuf>,
     pub presets: Option<PathBuf>,
-    /// The trial file, the key store and whether this build checks licenses.
-    pub license: client::Config,
-    /// The site desktop sign-in and renewal talk to, and how. Tests script
-    /// their own [`Api`] so they never reach the network.
-    pub account_url: String,
-    pub account_api: Arc<dyn Api>,
-    /// The update check's key, transport and install target. Tests script
-    /// their own transport.
-    pub update: UpdateConfig,
 }
 
 impl Paths {
@@ -54,10 +40,6 @@ impl Paths {
             settings: Settings::path(),
             history: History::path(),
             presets: paths::presets_dir(),
-            license: client::Config::from_env(paths::config_dir(), paths::data_dir()),
-            account_url: account::account_url(),
-            account_api: Arc::new(account::Http::new(&account::account_url())),
-            update: UpdateConfig::from_env(),
         }
     }
 }
@@ -132,7 +114,7 @@ pub struct Added {
     pub jobs: Vec<JobId>,
     /// Files with no default format they can reach.
     pub ask: Vec<PathBuf>,
-    /// Folders that could not be read, or why the license stopped the batch.
+    /// Folders that could not be read, or why a batch could not start.
     pub errors: Vec<String>,
 }
 
@@ -239,18 +221,6 @@ pub struct AppState {
     pub presets_dir: Option<PathBuf>,
     /// Problems loading or saving app files, shown in the Settings tab.
     pub errors: Vec<String>,
-    pub(crate) licensing: Licensing,
-    /// Where this machine stands, refreshed whenever it can change.
-    pub license: client::State,
-    /// Desktop sign-in and Pro renewal.
-    pub account: Account,
-    pub(crate) update_config: UpdateConfig,
-    /// What the last update check found.
-    pub update: Update,
-    pub(crate) _update_task: Option<Task<()>>,
-    /// The last manifest accepted this session, to select again when the
-    /// license changes.
-    pub(crate) update_manifest: Option<Arc<Vec<u8>>>,
     batch: Batch,
     /// Jobs from silent conversions (a target picked in a background menu).
     /// Explorer requests that ask to show progress are tracked like normal
@@ -315,8 +285,6 @@ impl AppState {
                 };
             }
         });
-        let licensing = Licensing::new(paths.license);
-        let account = Account::new(paths.account_url, paths.account_api, licensing.session());
         let mut state = Self {
             registry,
             registry_generation: 0,
@@ -333,13 +301,6 @@ impl AppState {
             presets: BTreeMap::new(),
             presets_dir: paths.presets,
             errors,
-            license: licensing.state(),
-            licensing,
-            account,
-            update_config: paths.update,
-            update: Update::Idle,
-            _update_task: None,
-            update_manifest: None,
             batch: Batch::default(),
             silent: HashSet::new(),
             #[cfg(test)]
@@ -369,7 +330,7 @@ impl AppState {
     }
 
     /// Queues one job per file and returns their ids, in file order. Fails
-    /// with the reason, for the user, when the license stops conversions.
+    /// with the reason, for the user, when documents can't convert right now.
     pub fn convert(
         &mut self,
         files: &[PathBuf],
@@ -408,12 +369,6 @@ impl AppState {
                 .any(|f| format_by_extension(f).is_some_and(pack::is_document))
         {
             return Err(reason.into());
-        }
-        let allowed = self.licensing.begin_conversion();
-        self.license = self.licensing.state();
-        if let Err(blocked) = allowed {
-            cx.notify();
-            return Err(blocked.to_string());
         }
         // Retry runs from history, maybe after a restart in another working
         // directory, so a relative folder must not keep its meaning open.
@@ -484,8 +439,7 @@ impl AppState {
 
     /// Converts a request that named its target, in place and without a
     /// window. Fails, with the reason, when the request needs a window to ask:
-    /// the target is unknown or unreachable, a file can't be converted, or
-    /// the license stops conversions.
+    /// the target is unknown or unreachable, or a file can't be converted.
     pub fn convert_silently(
         &mut self,
         request: &Request,
@@ -768,24 +722,6 @@ impl AppState {
         }
     }
 
-    /// Verifies and stores a license key.
-    pub fn activate(&mut self, key: &str, cx: &mut Context<Self>) -> Result<License, String> {
-        let result = self.licensing.activate(key).map_err(|e| e.to_string());
-        self.license = self.licensing.state();
-        self.reselect_update();
-        cx.notify();
-        result
-    }
-
-    /// Removes the license from this machine.
-    pub fn deactivate(&mut self, cx: &mut Context<Self>) -> Result<(), String> {
-        let result = self.licensing.deactivate();
-        self.license = self.licensing.state();
-        self.reselect_update();
-        cx.notify();
-        result
-    }
-
     pub fn cancel(&mut self, id: JobId) {
         self.runner.cancel(id);
     }
@@ -804,11 +740,6 @@ impl AppState {
     pub fn clear_activity(&mut self, cx: &mut Context<Self>) {
         self.clear_finished(cx);
         self.clear_history(cx);
-    }
-
-    /// Whether this build checks licenses.
-    pub fn license_enforced(&self) -> bool {
-        self.licensing.enforced()
     }
 
     fn apply(&mut self, update: crate::jobs::Update, cx: &mut Context<Self>) {
@@ -978,27 +909,6 @@ impl AppState {
             self.errors.push(format!("Settings were not saved: {e}"));
         }
         cx.notify();
-    }
-
-    /// [`Self::update_settings`] for a change that must reach the disk, such
-    /// as the update check's rollback guard. If saving fails, the change is
-    /// undone and the error returned.
-    pub fn save_settings_now(
-        &mut self,
-        change: impl FnOnce(&mut Settings),
-        cx: &mut Context<Self>,
-    ) -> Result<(), String> {
-        let before = self.settings.clone();
-        change(&mut self.settings);
-        if let Some(path) = &self.settings_path
-            && let Err(e) = self.settings.save(path)
-        {
-            self.settings = before;
-            cx.notify();
-            return Err(e.to_string());
-        }
-        cx.notify();
-        Ok(())
     }
 }
 

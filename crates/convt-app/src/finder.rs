@@ -1,6 +1,5 @@
 //! Finder extension setup: the System Settings URL and whether the
-//! extension is on. The first-run window, Activity and Settings share this
-//! so a skipped or closed setup can still be finished.
+//! extension is on. Activity and Settings share this.
 
 use std::time::Duration;
 

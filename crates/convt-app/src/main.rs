@@ -6,7 +6,6 @@
 // closing that window kills the app. Debug builds keep a console for logs.
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
-mod account;
 mod automation;
 mod clipboard;
 mod clock;
@@ -24,7 +23,6 @@ mod settings;
 mod thumbs;
 mod tray;
 mod ui;
-mod update;
 
 use std::io::Write;
 use std::process::ExitCode;
@@ -124,12 +122,6 @@ fn run(primary: instance::Primary, first: Request) {
         macos::init(&state, tx.clone(), cx);
         cx.set_global(Shared(state.clone()));
         cx.on_window_closed(last_window_closed).detach();
-        // One of the two network calls the app makes by itself: while signed in, at
-        // most once a day, ask convt.app for the current Pro key.
-        state.update(cx, |s, cx| s.renew_on_launch(cx));
-        // The other: when update checks are on, at most once a day, fetch the
-        // signed list of releases.
-        state.update(cx, |s, cx| s.check_updates_on_launch(cx));
 
         primary.listen(move |req| drop(tx.unbounded_send(req)));
         cx.spawn(async move |cx| {

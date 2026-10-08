@@ -434,9 +434,9 @@ mod tests {
         let (requests, rest) = open_urls(vec![
             "file:///tmp/a%20b.png".into(),
             "file:///tmp/c.jpg".into(),
-            "convt://activate?key=K".into(),
+            "convt://convert?file=/tmp/d.png".into(),
         ]);
-        assert_eq!(rest, vec!["convt://activate?key=K".to_string()]);
+        assert_eq!(rest, vec!["convt://convert?file=/tmp/d.png".to_string()]);
         assert_eq!(requests.len(), 1);
         assert_eq!(
             requests[0].files,
