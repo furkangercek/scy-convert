@@ -2543,3 +2543,47 @@ fn quick_convert_for_a_video_offers_actions_and_common_stills(cx: &mut TestAppCo
         assert!(!shown(cx, window, hidden), "{hidden}");
     }
 }
+
+#[gpui_kit::test]
+fn add_a_caption_asks_for_the_text_then_saves_beside_the_gif(cx: &mut TestAppContext) {
+    let f = Fixture::new(cx);
+    let gif = f.dir.path().join("cat.gif");
+    image::RgbaImage::from_pixel(64, 48, image::Rgba([40, 90, 200, 255]))
+        .save(&gif)
+        .unwrap();
+    let actions = cx.read(|cx| f.app.read(cx).common_actions(std::slice::from_ref(&gif)));
+    if !actions
+        .iter()
+        .any(|(id, _)| *id == scyconvert_core::actions::CAPTION)
+    {
+        eprintln!("skipping: no engine edits GIFs here (is FFmpeg installed?)");
+        return;
+    }
+    let mut request = cli(vec![gif], None, None);
+    request.action = Some(scyconvert_core::actions::CAPTION.into());
+    cx.update(|cx| super::route(request, cx));
+    let (window, view) = window_of::<super::CaptionView>(cx);
+    // Nothing runs until there is text.
+    cx.update_window(window, |_, window, cx| {
+        view.update(cx, |v, cx| v.save(window, cx))
+    })
+    .unwrap();
+    assert!(cx.read(|cx| f.app.read(cx).queue.entries.is_empty()));
+    let text = cx.read(|cx| view.read(cx).text.clone());
+    set_input(cx, window, &text, "hello there");
+    cx.update_window(window, |_, window, cx| {
+        view.update(cx, |v, cx| v.save(window, cx))
+    })
+    .unwrap();
+    wait_until(cx, "the caption", |cx| f.app.read(cx).recent.len() == 1);
+    cx.read(|cx| {
+        let recent = &f.app.read(cx).recent;
+        assert!(
+            matches!(&recent[0].outcome, Outcome::Done(out) if out[0].ends_with("cat-captioned.gif")),
+            "{:?}",
+            recent[0].outcome
+        );
+    });
+    let (w, h) = image::image_dimensions(f.dir.path().join("cat-captioned.gif")).unwrap();
+    assert!(w == 64 && h > 48, "{w}x{h}");
+}

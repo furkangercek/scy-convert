@@ -446,6 +446,10 @@ impl QuickView {
         if files.is_empty() || !self.jobs.is_empty() {
             return;
         }
+        if action == scyconvert_core::actions::CAPTION {
+            super::open_caption(files, cx);
+            return;
+        }
         let dir = self.save_dir.clone();
         let queued = self.app.update(cx, |s, cx| {
             s.queue_action(&files, action, dir.as_deref(), Feedback::Normal, cx)

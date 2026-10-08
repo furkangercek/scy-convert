@@ -3,10 +3,11 @@
 
 #define AppName "scyconvert"
 ; Must match CLSIDS in crates/scyconvert-shell/src/windows.rs: one class
-; per top-level menu (convert, compress, adjust audio).
+; per top-level menu (convert, compress, adjust audio, edit GIF).
 #define ShellClsid "{{BB1183D6-E6CA-44E1-906C-A0A47845841D}"
 #define CompressClsid "{{B77C2BC9-B09C-4659-85CF-D4E34FC6CA15}"
 #define AudioClsid "{{7B070AD5-9DFE-4769-B4A3-27CC8B0FB2CA}"
+#define GifClsid "{{A7791315-7700-4E6D-AEE1-5DF43833C4D8}"
 
 [Setup]
 AppId={{8CDBA0D1-494B-4C1E-9201-43327E889181}
@@ -36,7 +37,7 @@ SetupIconFile={#Payload}\scyconvert.ico
 [Tasks]
 Name: "desktopicon"; Description: "Create a desktop shortcut"; Flags: unchecked
 Name: "addtopath"; Description: "Add the scyconvert command to PATH"
-Name: "explorermenu"; Description: "Add Convert, Compress and Adjust audio to the Explorer right-click menu"
+Name: "explorermenu"; Description: "Add Convert, Compress, Adjust audio and Edit GIF to the Explorer right-click menu"
 Name: "startup"; Description: "Start scyconvert minimized when I sign in"
 
 [Files]
@@ -80,6 +81,16 @@ Root: HKCU; Subkey: "Software\Classes\*\shell\scyconvert.audio"; ValueType: stri
   ValueName: "MUIVerb"; ValueData: "Adjust audio with scyconvert"; Tasks: explorermenu
 Root: HKCU; Subkey: "Software\Classes\*\shell\scyconvert.audio"; ValueType: string; \
   ValueName: "ExplorerCommandHandler"; ValueData: "{#AudioClsid}"; Tasks: explorermenu
+Root: HKCU; Subkey: "Software\Classes\CLSID\{#GifClsid}"; Flags: uninsdeletekey; Tasks: explorermenu
+Root: HKCU; Subkey: "Software\Classes\CLSID\{#GifClsid}\InprocServer32"; ValueType: string; \
+  ValueData: "{app}\scyconvert_shell.dll"; Tasks: explorermenu
+Root: HKCU; Subkey: "Software\Classes\CLSID\{#GifClsid}\InprocServer32"; ValueType: string; \
+  ValueName: "ThreadingModel"; ValueData: "Apartment"; Tasks: explorermenu
+Root: HKCU; Subkey: "Software\Classes\*\shell\scyconvert.gif"; Flags: uninsdeletekey; Tasks: explorermenu
+Root: HKCU; Subkey: "Software\Classes\*\shell\scyconvert.gif"; ValueType: string; \
+  ValueName: "MUIVerb"; ValueData: "Edit GIF with scyconvert"; Tasks: explorermenu
+Root: HKCU; Subkey: "Software\Classes\*\shell\scyconvert.gif"; ValueType: string; \
+  ValueName: "ExplorerCommandHandler"; ValueData: "{#GifClsid}"; Tasks: explorermenu
 ; Same value as "Open at login" in Settings (crates/scyconvert-app/src/login.rs).
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; \
   ValueName: "scyconvert"; ValueData: """{app}\scyconvert-app.exe"" --minimized"; \

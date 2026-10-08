@@ -535,6 +535,23 @@ impl AppState {
         feedback: Feedback,
         cx: &mut Context<Self>,
     ) -> Result<Vec<JobId>, String> {
+        if action == scyconvert_core::actions::CAPTION {
+            return Err("A caption needs its text first.".into());
+        }
+        self.queue_action_with(files, action, &Options::default(), dir, feedback, cx)
+    }
+
+    /// [`Self::queue_action`] with `extra` options on top of the action's
+    /// own: the caption for "Add a caption...".
+    pub fn queue_action_with(
+        &mut self,
+        files: &[PathBuf],
+        action: &str,
+        extra: &Options,
+        dir: Option<&Path>,
+        feedback: Feedback,
+        cx: &mut Context<Self>,
+    ) -> Result<Vec<JobId>, String> {
         let plans = files
             .iter()
             .map(|file| {
@@ -557,7 +574,7 @@ impl AppState {
             ids.extend(self.queue_jobs(
                 std::slice::from_ref(&file),
                 plan.to,
-                &plan.options,
+                &extra.clone().or(&plan.options),
                 output,
                 feedback,
                 cx,

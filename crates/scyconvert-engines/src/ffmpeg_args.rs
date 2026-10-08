@@ -2,15 +2,39 @@
 //! encoders a container takes, and the video and audio filter chains the
 //! options build.
 
+use std::path::Path;
+
 use scyconvert_core::{
-    AudioCodec, Channels, EncoderSpeed, Error, Flip, Hardware, Options, Result, Rotation,
-    VideoCodec,
+    AudioCodec, Caption, CaptionPlace, Channels, EncoderSpeed, Error, Flip, Hardware, Options,
+    Playback, Result, Rotation, VideoCodec,
 };
 
 /// Video containers FFmpeg writes. GIF is separate: no audio, its own palette.
 const CONTAINERS: &[&str] = &[
     "mp4", "mov", "mkv", "webm", "avi", "wmv", "flv", "mpeg", "m2ts", "3gp", "ogv",
 ];
+
+/// What the arguments need to know about the input.
+#[derive(Debug, Clone, Copy)]
+pub struct Source<'a> {
+    /// The input's format id.
+    pub format: &'a str,
+    /// The input's length in seconds, which fading out needs.
+    pub secs: Option<f64>,
+    /// A bold font file for captions.
+    pub font: Option<&'a Path>,
+}
+
+#[cfg(test)]
+impl Source<'_> {
+    pub fn video(secs: Option<f64>) -> Self {
+        Source {
+            format: "mp4",
+            secs,
+            font: None,
+        }
+    }
+}
 
 /// The command line around `-i <input>` and before the output path.
 #[derive(Debug, Default, PartialEq)]
@@ -696,9 +720,131 @@ pub fn with_size_target(
     Ok(sized)
 }
 
-/// The arguments to convert to `to`. `input_secs` is the input's length,
-/// which fading out needs.
-pub fn ffmpeg_args(to: &str, o: &Options, input_secs: Option<f64>) -> Result<Args> {
+/// Escapes `value` for a filter option inside a `-vf` graph: once for the
+/// option parser, then again for the graph parser.
+fn filter_value(value: &str) -> String {
+    let escape = |text: &str, special: &[char]| {
+        text.chars().fold(String::new(), |mut out, c| {
+            if special.contains(&c) {
+                out.push('\\');
+            }
+            out.push(c);
+            out
+        })
+    };
+    escape(
+        &escape(value, &['\\', '\'', ':']),
+        &['\\', '\'', '[', ']', ',', ';'],
+    )
+}
+
+/// Longest caption line, in characters.
+const CAPTION_LINE: usize = 22;
+
+/// `text` in lines of at most `width` characters, broken between words
+/// where it can be.
+fn wrap(text: &str, width: usize) -> Vec<String> {
+    let mut lines: Vec<String> = Vec::new();
+    for word in text.split_whitespace() {
+        let mut word: Vec<char> = word.chars().collect();
+        while word.len() > width {
+            let rest = word.split_off(width);
+            lines.push(word.into_iter().collect());
+            word = rest;
+        }
+        let word: String = word.into_iter().collect();
+        match lines.last_mut() {
+            Some(line) if line.chars().count() + 1 + word.chars().count() <= width => {
+                line.push(' ');
+                line.push_str(&word);
+            }
+            _ => lines.push(word),
+        }
+    }
+    lines
+}
+
+/// A white bar above or below the picture with `caption` centered on it in
+/// black. Sizes are shares of the width, so the text fits any picture: the
+/// longest line fills about 90% of it, up to a cap for short captions.
+fn caption_filters(caption: &Caption, font: &Path) -> Vec<String> {
+    let lines = wrap(caption.text.trim(), CAPTION_LINE);
+    let longest = lines.iter().map(|l| l.chars().count()).max().unwrap_or(1);
+    // Bold Arial averages about 0.6 em per character.
+    let size = (0.9 / (longest as f64 * 0.6)).min(0.12);
+    let line = size * 1.2;
+    let margin = size * 0.3;
+    let bar = margin * 2. + line * lines.len() as f64;
+    let bar_px = format!("trunc(iw*{bar:.4}/2)*2");
+    let (pad_y, top) = match caption.place {
+        CaptionPlace::Top => (bar_px.as_str(), "0".to_string()),
+        CaptionPlace::Bottom => ("0", format!("h-w*{bar:.4}")),
+    };
+    let font = filter_value(&font.to_string_lossy().replace('\\', "/"));
+    let mut f = vec![format!("pad=w=iw:h=ih+{bar_px}:x=0:y={pad_y}:color=white")];
+    for (i, text) in lines.iter().enumerate() {
+        let y = margin + line * i as f64;
+        f.push(format!(
+            "drawtext=fontfile={font}:text={}:expansion=none:fontcolor=black:\
+             fontsize=w*{size:.4}:x=(w-text_w)/2:y={top}+w*{y:.4}:y_align=font",
+            filter_value(text)
+        ));
+    }
+    f
+}
+
+/// Frames for GIF output: the picture changes, caption and playback, then
+/// a palette made for this GIF.
+fn gif_graph(o: &Options, source: &Source, out_secs: Option<f64>) -> Result<String> {
+    // A GIF keeps its own frame rate and size unless asked; video becomes
+    // 12 fps and at most 720 px wide, which keeps the file reasonable.
+    let from_gif = source.format == "gif";
+    let mut vf = picture_filters(o);
+    vf.extend(speed_filter(o));
+    if from_gif && o.speed.is_some_and(|s| s > 100) {
+        // Browsers slow frames shorter than 2/100 s right down, so a sped-up
+        // GIF keeps at most 50 frames a second.
+        vf.push("select='isnan(prev_selected_t)+gte(t-prev_selected_t,0.02)'".into());
+    }
+    match (o.fps, from_gif) {
+        (Some(fps), _) => vf.push(format!("fps={}", fps.ffmpeg())),
+        (None, false) => vf.push("fps=12".into()),
+        (None, true) => {}
+    }
+    match (o.video_height, from_gif) {
+        (Some(height), _) => vf.push(format!("{}:flags=lanczos", video_scale(height))),
+        (None, false) => vf.push("scale='min(720,iw)':-2:flags=lanczos".into()),
+        (None, true) => {}
+    }
+    vf.extend(fades("fade", o, out_secs)?);
+    if let Some(caption) = &o.caption {
+        let font = source
+            .font
+            .ok_or_else(|| invalid("captions need a bold font, and none was found".into()))?;
+        vf.extend(caption_filters(caption, font));
+    }
+    match o.playback {
+        Some(Playback::Reverse) => vf.push("reverse".into()),
+        // The backward half starts one frame in, so the turn doesn't stall.
+        Some(Playback::Boomerang) => vf.push(
+            "split[f][r];[r]reverse,trim=start_frame=1,setpts=PTS-STARTPTS[b];\
+             [f][b]concat=n=2:v=1:a=0"
+                .into(),
+        ),
+        None => {}
+    }
+    vf.push("split[a][b];[a]palettegen[p];[b][p]paletteuse".into());
+    Ok(vf.join(","))
+}
+
+/// The arguments to convert `source` to `to`.
+pub fn ffmpeg_args(to: &str, o: &Options, source: &Source) -> Result<Args> {
+    let input_secs = source.secs;
+    if to != "gif" && (o.playback.is_some() || o.caption.is_some()) {
+        return Err(invalid(
+            "reversing and captions are only for GIF output".into(),
+        ));
+    }
     let out_secs = output_secs(o, input_secs);
     let mut input = Vec::new();
     if let Some(start) = o.start {
@@ -746,19 +892,12 @@ pub fn ffmpeg_args(to: &str, o: &Options, input_secs: Option<f64>) -> Result<Arg
             }
         }
         "gif" => {
-            let mut vf = picture_filters(o);
-            vf.extend(speed_filter(o));
-            vf.push(format!("fps={}", o.fps.map_or("12".into(), |f| f.ffmpeg())));
-            let size = o
-                .video_height
-                .map_or("scale='min(720,iw)':-2".into(), video_scale);
-            vf.push(format!("{size}:flags=lanczos"));
-            vf.extend(fades("fade", o, out_secs)?);
-            let vf = format!(
-                "{},split[a][b];[a]palettegen[p];[b][p]paletteuse",
-                vf.join(",")
-            );
-            output.extend(["-vf".into(), vf, "-an".into()]);
+            output.extend(["-vf".into(), gif_graph(o, source, out_secs)?, "-an".into()]);
+            if source.format == "gif" && o.fps.is_none() {
+                // Each frame keeps its own delay. At FFmpeg's usual constant
+                // rate, a 10 fps GIF sped up would lose every other frame.
+                output.extend(["-fps_mode", "vfr", "-enc_time_base:v", "1/100"].map(String::from));
+            }
         }
         // Still frames are always written as PNG, keeping any alpha; the
         // caller then encodes the target through the image engine.
@@ -795,11 +934,16 @@ mod tests {
     use super::*;
 
     fn out(to: &str, o: &Options) -> String {
-        ffmpeg_args(to, o, Some(10.)).unwrap().output.join(" ")
+        ffmpeg_args(to, o, &Source::video(Some(10.)))
+            .unwrap()
+            .output
+            .join(" ")
     }
 
     fn err(to: &str, o: &Options) -> String {
-        ffmpeg_args(to, o, Some(10.)).unwrap_err().to_string()
+        ffmpeg_args(to, o, &Source::video(Some(10.)))
+            .unwrap_err()
+            .to_string()
     }
 
     #[test]
@@ -824,6 +968,83 @@ mod tests {
     }
 
     #[test]
+    fn gif_edits_keep_the_gifs_own_frames() {
+        let font = Path::new(r"C:\Windows\Fonts\arialbd.ttf");
+        let gif = Source {
+            format: "gif",
+            secs: Some(3.),
+            font: Some(font),
+        };
+        let args = |o: &Options| ffmpeg_args("gif", o, &gif).unwrap().output.join(" ");
+        assert_eq!(
+            args(&Options {
+                playback: Some(Playback::Reverse),
+                ..Options::default()
+            }),
+            "-vf reverse,split[a][b];[a]palettegen[p];[b][p]paletteuse -an \
+             -fps_mode vfr -enc_time_base:v 1/100"
+        );
+        let faster = args(&Options {
+            speed: Some(200),
+            ..Options::default()
+        });
+        assert!(
+            faster.starts_with("-vf setpts=PTS*100/200,select=") && !faster.contains("fps="),
+            "{faster}"
+        );
+        let captioned = args(&Options {
+            caption: Some(Caption {
+                text: "it's: 100% [fine]".into(),
+                place: CaptionPlace::Bottom,
+            }),
+            ..Options::default()
+        });
+        assert!(captioned.contains("pad=w=iw:h=ih+trunc(iw*"), "{captioned}");
+        assert!(
+            captioned.contains(r"fontfile=C\\:/Windows/Fonts/arialbd.ttf"),
+            "{captioned}"
+        );
+        assert!(
+            captioned.contains(r"text=it\\\'s\\: 100% \[fine\]:expansion=none"),
+            "{captioned}"
+        );
+        assert!(captioned.contains(":y=h-w*"), "{captioned}");
+        // Video to GIF still gets its usual rate and size.
+        assert!(out("gif", &Options::default()).starts_with("-vf fps=12,scale="));
+        assert!(
+            ffmpeg_args(
+                "gif",
+                &Options {
+                    caption: Some(Caption {
+                        text: "hi".into(),
+                        place: CaptionPlace::Top,
+                    }),
+                    ..Options::default()
+                },
+                &Source { font: None, ..gif }
+            )
+            .is_err()
+        );
+        assert!(
+            err(
+                "mp4",
+                &Options {
+                    playback: Some(Playback::Boomerang),
+                    ..Options::default()
+                }
+            )
+            .contains("only for GIF")
+        );
+    }
+
+    #[test]
+    fn captions_wrap_between_words() {
+        assert_eq!(wrap("  one  two three ", 9), ["one two", "three"]);
+        assert_eq!(wrap("abcdefghij k", 4), ["abcd", "efgh", "ij k"]);
+        assert!(wrap(" ", 9).is_empty());
+    }
+
+    #[test]
     fn defaults_are_unchanged() {
         let o = Options::default();
         assert_eq!(
@@ -844,7 +1065,12 @@ mod tests {
             "-vf fps=12,scale='min(720,iw)':-2:flags=lanczos,split[a][b];[a]palettegen[p];[b][p]paletteuse -an"
         );
         assert_eq!(out("mp3", &o), "-vn -c:a libmp3lame -q:a 2");
-        assert!(ffmpeg_args("mp4", &o, None).unwrap().input.is_empty());
+        assert!(
+            ffmpeg_args("mp4", &o, &Source::video(None))
+                .unwrap()
+                .input
+                .is_empty()
+        );
     }
 
     #[test]
@@ -1026,7 +1252,7 @@ mod tests {
             channels: Some(Channels::Mono),
             ..Options::default()
         };
-        let args = ffmpeg_args("mp4", &o, Some(10.)).unwrap();
+        let args = ffmpeg_args("mp4", &o, &Source::video(Some(10.))).unwrap();
         assert_eq!(args.input, ["-ss", "1", "-to", "5"]);
         let output = args.output.join(" ");
         // 4 s of input at double speed is 2 s, so the fade out starts at 1 s.
@@ -1049,7 +1275,7 @@ mod tests {
                     end: None,
                     ..o.clone()
                 },
-                None
+                &Source::video(None)
             )
             .unwrap_err()
             .to_string()

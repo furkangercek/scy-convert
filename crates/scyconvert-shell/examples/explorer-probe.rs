@@ -17,10 +17,11 @@ fn main() -> windows::core::Result<()> {
     };
     use windows::core::*;
 
-    const CLSIDS: [u128; 3] = [
+    const CLSIDS: [u128; 4] = [
         0xbb1183d6_e6ca_44e1_906c_a0a47845841d,
         0xb77c2bc9_b09c_4659_85cf_d4e34fc6ca15,
         0x7b070ad5_9dfe_4769_b4a3_27cc8b0fb2ca,
+        0xa7791315_7700_4e6d_aee1_5df43833c4d8,
     ];
     let mut args: Vec<_> = std::env::args_os().skip(1).collect();
     let registered = args.first().is_some_and(|arg| arg == "--registered");

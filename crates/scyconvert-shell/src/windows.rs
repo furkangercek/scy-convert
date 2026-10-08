@@ -21,10 +21,11 @@ use crate::{Entry, Item, MENUS, Submenu, common_menus, parse_menus};
 /// One COM class per top-level menu, in `MENUS` order. The installer and
 /// the sparse package register each one; the first is the original
 /// "Convert with scyconvert" class.
-pub const CLSIDS: [GUID; 3] = [
+pub const CLSIDS: [GUID; 4] = [
     GUID::from_u128(0xbb1183d6_e6ca_44e1_906c_a0a47845841d),
     GUID::from_u128(0xb77c2bc9_b09c_4659_85cf_d4e34fc6ca15),
     GUID::from_u128(0x7b070ad5_9dfe_4769_b4a3_27cc8b0fb2ca),
+    GUID::from_u128(0xa7791315_7700_4e6d_aee1_5df43833c4d8),
 ];
 static OBJECTS: AtomicUsize = AtomicUsize::new(0);
 static SERVER_LOCKS: AtomicUsize = AtomicUsize::new(0);

@@ -1,25 +1,27 @@
 //! One-click actions the menus offer next to plain targets: compressing to a
-//! stated size, making audio mono and the like. An action is a target and
+//! stated size, making audio mono, reversing a GIF and the like. An action is a target and
 //! options chosen for the file at hand, so a compressed MKV stays an MKV.
 //! Actions come in menus of their own, each a submenu in Explorer.
 
-use crate::{Category, Channels, Format, Options, Registry, VideoCodec, format_by_id};
+use crate::{Category, Channels, Format, Options, Playback, Registry, VideoCodec, format_by_id};
 
 /// A submenu of actions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ActionMenu {
     Compress,
     Audio,
+    Gif,
 }
 
 impl ActionMenu {
-    pub const ALL: [ActionMenu; 2] = [ActionMenu::Compress, ActionMenu::Audio];
+    pub const ALL: [ActionMenu; 3] = [ActionMenu::Compress, ActionMenu::Audio, ActionMenu::Gif];
 
     /// The id the CLI's menu output uses.
     pub fn id(self) -> &'static str {
         match self {
             ActionMenu::Compress => "compress",
             ActionMenu::Audio => "audio",
+            ActionMenu::Gif => "gif",
         }
     }
 
@@ -28,9 +30,14 @@ impl ActionMenu {
         match self {
             ActionMenu::Compress => "Compress",
             ActionMenu::Audio => "Audio",
+            ActionMenu::Gif => "Edit GIF",
         }
     }
 }
+
+/// The action that asks for its text first: the app opens a window for it,
+/// and the CLI needs `--caption`.
+pub const CAPTION: &str = "gif-caption";
 
 /// Every action id, in menu order.
 pub const ACTION_IDS: &[&str] = &[
@@ -45,6 +52,12 @@ pub const ACTION_IDS: &[&str] = &[
     "mono",
     "stereo",
     "normalize",
+    "gif-reverse",
+    "gif-boomerang",
+    "gif-faster",
+    "gif-fastest",
+    "gif-slower",
+    CAPTION,
 ];
 
 /// What an action does to one file.
@@ -73,6 +86,7 @@ const LOSSLESS_AUDIO: &[&str] = &["wav", "flac", "aiff"];
 pub fn plan(id: &str, from: &'static Format) -> Option<ActionPlan> {
     let video = from.category == Category::Video;
     let audio = from.category == Category::Audio;
+    let gif = from.id == "gif";
     let plan = |menu, label: String, to, options, suffix| ActionPlan {
         menu,
         label,
@@ -124,6 +138,17 @@ pub fn plan(id: &str, from: &'static Format) -> Option<ActionPlan> {
                 ..Options::default()
             },
             (!lossless).then_some("compressed"),
+        )
+    };
+    let edit_gif = |label: &str, options, suffix| same(ActionMenu::Gif, label, options, suffix);
+    let gif_speed = |percent: u16, label: &str, suffix| {
+        edit_gif(
+            label,
+            Options {
+                speed: Some(percent),
+                ..Options::default()
+            },
+            suffix,
         )
     };
     Some(match id {
@@ -179,6 +204,26 @@ pub fn plan(id: &str, from: &'static Format) -> Option<ActionPlan> {
             },
             "normalized",
         ),
+        "gif-reverse" if gif => edit_gif(
+            "Reverse",
+            Options {
+                playback: Some(Playback::Reverse),
+                ..Options::default()
+            },
+            "reversed",
+        ),
+        "gif-boomerang" if gif => edit_gif(
+            "Play forward, then backward",
+            Options {
+                playback: Some(Playback::Boomerang),
+                ..Options::default()
+            },
+            "boomerang",
+        ),
+        "gif-faster" if gif => gif_speed(150, "Speed up 1.5x", "1.5x"),
+        "gif-fastest" if gif => gif_speed(200, "Speed up 2x", "2x"),
+        "gif-slower" if gif => gif_speed(50, "Slow down to half speed", "0.5x"),
+        CAPTION if gif => edit_gif("Add a caption...", Options::default(), "captioned"),
         _ => return None,
     })
 }
@@ -221,6 +266,15 @@ mod tests {
             ActionMenu::Audio
         );
         assert!(plan("nope", mkv).is_none());
+        let gif = format("gif");
+        let reversed = plan("gif-reverse", gif).unwrap();
+        assert_eq!(
+            (reversed.menu, reversed.to, reversed.suffix),
+            (ActionMenu::Gif, gif, Some("reversed"))
+        );
+        assert_eq!(plan("gif-fastest", gif).unwrap().options.speed, Some(200));
+        assert!(plan("gif-reverse", mkv).is_none());
+        assert!(plan(CAPTION, format("png")).is_none());
         for id in ACTION_IDS {
             for f in crate::FORMATS {
                 if let Some(p) = plan(id, f) {

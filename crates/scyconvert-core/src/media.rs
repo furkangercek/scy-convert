@@ -162,6 +162,36 @@ choices! {
 }
 
 choices! {
+    /// Which way frames play: backwards, or forwards then backwards.
+    pub enum Playback ("playback") {
+        Reverse = "reverse", "Reverse";
+        Boomerang = "boomerang", "Boomerang", "pingpong", "ping-pong";
+    }
+}
+
+choices! {
+    /// Where a caption's bar goes.
+    pub enum CaptionPlace ("caption place") {
+        Top = "top", "Top";
+        Bottom = "bottom", "Bottom";
+    }
+}
+
+/// Black bold text on a white bar added above or below the picture, as
+/// meme GIFs have it.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Caption {
+    pub text: String,
+    pub place: CaptionPlace,
+}
+
+impl Caption {
+    /// The longest caption, in characters.
+    pub const MAX_CHARS: usize = 120;
+}
+
+choices! {
     /// Audio channel layout.
     pub enum Channels ("channels") {
         Mono = "mono", "Mono", "1";

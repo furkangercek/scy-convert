@@ -6,10 +6,11 @@ mod windows;
 /// The top-level menus, each its own COM class and Explorer verb, in the
 /// order they appear: Windows 11 shows one level of submenu, so each kind of
 /// command gets an entry of its own.
-pub const MENUS: [(&str, &str); 3] = [
+pub const MENUS: [(&str, &str); 4] = [
     ("convert", "Convert with scyconvert"),
     ("compress", "Compress with scyconvert"),
     ("audio", "Adjust audio with scyconvert"),
+    ("gif", "Edit GIF with scyconvert"),
 ];
 
 /// A target format or an action.

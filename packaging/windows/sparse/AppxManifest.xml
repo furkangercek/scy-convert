@@ -5,7 +5,8 @@
   folder, passed to Add-AppxPackage as -ExternalLocation. Built and registered
   by packaging\windows\menu.ps1, which fills in the version and publisher.
   The Clsids must match CLSIDS in crates/scyconvert-shell/src/windows.rs:
-  one class and verb per top-level menu (convert, compress, adjust audio).
+  one class and verb per top-level menu (convert, compress, adjust audio,
+  edit GIF).
 -->
 <Package
   xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
@@ -44,6 +45,7 @@
               <desktop5:Verb Id="scyconvert" Clsid="BB1183D6-E6CA-44E1-906C-A0A47845841D" />
               <desktop5:Verb Id="scyconvertcompress" Clsid="B77C2BC9-B09C-4659-85CF-D4E34FC6CA15" />
               <desktop5:Verb Id="scyconvertaudio" Clsid="7B070AD5-9DFE-4769-B4A3-27CC8B0FB2CA" />
+              <desktop5:Verb Id="scyconvertgif" Clsid="A7791315-7700-4E6D-AEE1-5DF43833C4D8" />
             </desktop5:ItemType>
           </desktop4:FileExplorerContextMenus>
         </desktop4:Extension>
@@ -53,6 +55,7 @@
               <com:Class Id="BB1183D6-E6CA-44E1-906C-A0A47845841D" Path="scyconvert_shell.dll" ThreadingModel="STA" />
               <com:Class Id="B77C2BC9-B09C-4659-85CF-D4E34FC6CA15" Path="scyconvert_shell.dll" ThreadingModel="STA" />
               <com:Class Id="7B070AD5-9DFE-4769-B4A3-27CC8B0FB2CA" Path="scyconvert_shell.dll" ThreadingModel="STA" />
+              <com:Class Id="A7791315-7700-4E6D-AEE1-5DF43833C4D8" Path="scyconvert_shell.dll" ThreadingModel="STA" />
             </com:SurrogateServer>
           </com:ComServer>
         </com:Extension>

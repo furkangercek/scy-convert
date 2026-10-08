@@ -18,7 +18,7 @@ pub use engine::{Cancel, Ctx, Engine, Progress, Step};
 pub use error::{Error, Result, stderr_tail};
 pub use formats::{Category, FORMATS, Format, format_by_extension, format_by_id};
 pub use options::{
-    Aspect, AudioCodec, Background, Channels, EncoderSpeed, Flip, FrameRate, Hardware, Options,
-    PageRange, Preset, Rotation, SAMPLE_RATES, Timestamp, VideoCodec,
+    Aspect, AudioCodec, Background, Caption, CaptionPlace, Channels, EncoderSpeed, Flip, FrameRate,
+    Hardware, Options, PageRange, Playback, Preset, Rotation, SAMPLE_RATES, Timestamp, VideoCodec,
 };
 pub use registry::{Job, Output, Plan, Registry, menu_rank};

@@ -3,7 +3,7 @@ use std::process::Command;
 
 use scyconvert_core::{Background, Ctx, Engine, Error, Result, Step};
 
-use crate::ffmpeg_args::{ffmpeg_args, output_secs, with_size_target};
+use crate::ffmpeg_args::{Source, ffmpeg_args, output_secs, with_size_target};
 
 const VIDEO_IN: &[&str] = &[
     "mp4", "mov", "webm", "mkv", "avi", "wmv", "flv", "mpeg", "m2ts", "3gp", "ogv", "gif",
@@ -16,6 +16,29 @@ const FRAME: &[&str] = &["png", "jpeg"];
 const AUDIO: &[&str] = &[
     "mp3", "wav", "flac", "aac", "m4a", "ogg", "opus", "wma", "aiff", "ac3",
 ];
+
+/// Reversing holds every frame in memory, so it stops at GIFs this long.
+const MAX_REVERSE_SECS: f64 = 30.;
+
+/// A bold font for captions: Arial Bold on Windows and macOS, DejaVu or
+/// Liberation on Linux.
+fn caption_font() -> Option<PathBuf> {
+    let windows =
+        std::env::var_os("WINDIR").map(|dir| PathBuf::from(dir).join("Fonts").join("arialbd.ttf"));
+    windows
+        .into_iter()
+        .chain(
+            [
+                "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+                "/Library/Fonts/Arial Bold.ttf",
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+                "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf",
+                "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+            ]
+            .map(PathBuf::from),
+        )
+        .find(|path| path.is_file())
+}
 
 /// The FFmpeg binary the engine would run, found the way every tool is:
 /// `SCYCONVERT_FFMPEG`, next to the executable, then `PATH`. The desktop app uses
@@ -173,11 +196,11 @@ impl Engine for FfmpegEngine {
             // GIF has no audio stream, so extraction is never meaningful.
             .filter(|step| !(step.from.id == "gif" && AUDIO.contains(&step.to.id)))
             .chain(crate::steps(AUDIO, AUDIO))
-            // A file can become its own format again: compressed, made mono.
+            // A file can become its own format again: compressed, made mono,
+            // a GIF reversed.
             .chain(
                 VIDEO_IN
                     .iter()
-                    .filter(|id| **id != "gif")
                     .chain(AUDIO)
                     .filter_map(|id| scyconvert_core::format_by_id(id))
                     .map(|f| Step { from: f, to: f }),
@@ -197,7 +220,18 @@ impl Engine for FfmpegEngine {
         let to = ctx.step.to.id;
         let input_bytes = std::fs::metadata(input).ok().map(|m| m.len());
         let options = with_size_target(to, ctx.options, input_secs, input_bytes)?;
-        let args = ffmpeg_args(if to == "jpeg" { "png" } else { to }, &options, input_secs)?;
+        if options.playback.is_some() && input_secs.is_some_and(|s| s > MAX_REVERSE_SECS) {
+            return Err(Error::InvalidOption(format!(
+                "reversing holds every frame in memory, so it's limited to {MAX_REVERSE_SECS:.0} seconds"
+            )));
+        }
+        let font = options.caption.as_ref().and_then(|_| caption_font());
+        let source = Source {
+            format: ctx.step.from.id,
+            secs: input_secs,
+            font: font.as_deref(),
+        };
+        let args = ffmpeg_args(if to == "jpeg" { "png" } else { to }, &options, &source)?;
         // Progress follows the output's timeline: trimmed, at the new speed.
         let total = output_secs(ctx.options, input_secs)
             .filter(|t| *t > 0.0)

@@ -4,8 +4,8 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 pub use crate::media::{
-    Aspect, AudioCodec, Channels, EncoderSpeed, Flip, FrameRate, Hardware, Rotation, Timestamp,
-    VideoCodec,
+    Aspect, AudioCodec, Caption, CaptionPlace, Channels, EncoderSpeed, Flip, FrameRate, Hardware,
+    Playback, Rotation, Timestamp, VideoCodec,
 };
 use crate::{Error, Result};
 
@@ -88,6 +88,12 @@ pub struct Options {
     pub fade_in: Option<Timestamp>,
     /// Fade out to black and silence over this long.
     pub fade_out: Option<Timestamp>,
+    /// Play backwards, or forwards then backwards. GIF output only.
+    pub playback: Option<Playback>,
+
+    // Text.
+    /// A bar with text above or below the picture. GIF output only.
+    pub caption: Option<Caption>,
 
     // Audio.
     /// Audio encoder for video output and M4A. Unset uses the container's
@@ -172,6 +178,15 @@ impl Options {
         if self.bit_depth.is_some_and(|b| b != 16 && b != 24) {
             return bad("bit depth must be 16 or 24");
         }
+        if let Some(caption) = &self.caption {
+            let chars = caption.text.trim().chars().count();
+            if chars == 0 {
+                return bad("the caption is empty");
+            }
+            if chars > Caption::MAX_CHARS {
+                return bad("captions can be at most 120 characters");
+            }
+        }
         Ok(())
     }
 
@@ -205,6 +220,8 @@ impl Options {
             speed: self.speed.or(base.speed),
             fade_in: self.fade_in.or(base.fade_in),
             fade_out: self.fade_out.or(base.fade_out),
+            playback: self.playback.or(base.playback),
+            caption: self.caption.or_else(|| base.caption.clone()),
             audio_codec: self.audio_codec.or(base.audio_codec),
             sample_rate: self.sample_rate.or(base.sample_rate),
             channels: self.channels.or(base.channels),

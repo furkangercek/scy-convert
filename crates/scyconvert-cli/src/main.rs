@@ -5,9 +5,10 @@ use std::sync::Mutex;
 use anyhow::{Context, bail};
 use clap::{Args, Parser, Subcommand};
 use scyconvert_core::{
-    Aspect, AudioCodec, Background, Cancel, Category, Channels, EncoderSpeed, Event, FORMATS, Flip,
-    FrameRate, Hardware, Job, Options, Output, PageRange, Preset, Rotation, Timestamp, VideoCodec,
-    expand_inputs, format_by_extension, format_by_id, run_batch,
+    Aspect, AudioCodec, Background, Cancel, Caption, CaptionPlace, Category, Channels,
+    EncoderSpeed, Event, FORMATS, Flip, FrameRate, Hardware, Job, Options, Output, PageRange,
+    Playback, Preset, Rotation, Timestamp, VideoCodec, expand_inputs, format_by_extension,
+    format_by_id, run_batch,
 };
 use serde_json::json;
 
@@ -35,7 +36,8 @@ struct Cli {
     preset: Option<String>,
     /// A one-click action instead of --to: compress-half, compress-third,
     /// compress-smallest (video); compress-192, compress-128, compress-64
-    /// (audio); extract-audio, mute, mono, stereo, normalize
+    /// (audio); extract-audio, mute, mono, stereo, normalize; gif-reverse,
+    /// gif-boomerang, gif-faster, gif-fastest, gif-slower, gif-caption (GIF)
     #[arg(short, long, conflicts_with = "to")]
     action: Option<String>,
     /// Lossy quality from 1 to 100 (JPEG, HEIC, AVIF, video)
@@ -134,6 +136,15 @@ struct MediaArgs {
     /// Fade out over this long
     #[arg(long, value_name = "SECONDS")]
     fade_out: Option<Timestamp>,
+    /// GIF output: play in reverse, or forward then backward (boomerang)
+    #[arg(long, value_name = "WAY")]
+    playback: Option<Playback>,
+    /// GIF output: black bold text on a white bar
+    #[arg(long, value_name = "TEXT")]
+    caption: Option<String>,
+    /// Where the caption bar goes: top (default) or bottom
+    #[arg(long, value_name = "PLACE", requires = "caption")]
+    caption_place: Option<CaptionPlace>,
     /// Audio encoder for video and M4A: aac, opus, mp3, ac3, flac, alac or copy
     #[arg(long, value_name = "CODEC")]
     audio_codec: Option<AudioCodec>,
@@ -420,6 +431,11 @@ fn convert(cli: Cli, registry: &scyconvert_core::Registry) -> anyhow::Result<()>
         speed: cli.media.speed,
         fade_in: cli.media.fade_in,
         fade_out: cli.media.fade_out,
+        playback: cli.media.playback,
+        caption: cli.media.caption.clone().map(|text| Caption {
+            text,
+            place: cli.media.caption_place.unwrap_or(CaptionPlace::Top),
+        }),
         audio_codec: cli.media.audio_codec,
         sample_rate: cli.media.sample_rate,
         channels: cli.media.channels,
@@ -431,6 +447,12 @@ fn convert(cli: Cli, registry: &scyconvert_core::Registry) -> anyhow::Result<()>
     }
     .or(&preset.map(|p| p.options).unwrap_or_default());
     options.validate()?;
+    if action == Some(scyconvert_core::actions::CAPTION) && options.caption.is_none() {
+        bail!(
+            "--action {} needs --caption <text>",
+            scyconvert_core::actions::CAPTION
+        );
+    }
     if let Some(to) = to
         && options.background == Some(Background::Transparent)
         && to.category == Category::Image
@@ -668,6 +690,7 @@ fn print_menu(registry: &scyconvert_core::Registry, from: &'static scyconvert_co
         let title = match menu {
             scyconvert_core::ActionMenu::Compress => "Compress with scyconvert",
             scyconvert_core::ActionMenu::Audio => "Adjust audio with scyconvert",
+            scyconvert_core::ActionMenu::Gif => "Edit GIF with scyconvert",
         };
         println!("menu\t{}\t{title}", menu.id());
         for (id, plan) in mine {

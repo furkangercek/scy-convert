@@ -22,7 +22,7 @@ $PackageName = "Scyconvert.Desktop"
 $Subject = "CN=scyconvert"
 # The installer's classic verbs. The package's verbs also show in the
 # classic menu, so LegacyDisable hides these while the package is registered.
-$ClassicVerbs = "scyconvert", "scyconvert.compress", "scyconvert.audio" |
+$ClassicVerbs = "scyconvert", "scyconvert.compress", "scyconvert.audio", "scyconvert.gif" |
     ForEach-Object { "HKCU:\Software\Classes\*\shell\$_" }
 
 function Check($what) {

@@ -4,6 +4,7 @@
 //! belongs to the tray.
 
 mod advanced;
+mod caption;
 mod main_window;
 mod pack;
 mod popover;
@@ -18,6 +19,7 @@ use std::path::{Path, PathBuf};
 use gpui_kit::*;
 use scyconvert_core::Preset;
 
+pub use caption::CaptionView;
 pub use main_window::MainView;
 pub use popover::PopoverView;
 pub use quick::QuickView;
@@ -87,6 +89,8 @@ pub fn route(request: Request, cx: &mut App) {
         start_minimized(cx);
     } else if request.files.is_empty() {
         show_main(cx);
+    } else if request.action.as_deref() == Some(scyconvert_core::actions::CAPTION) {
+        open_caption(request.files, cx);
     } else if request.auto_start() {
         // Silent conversions never download: a document that needs the pack
         // fails here and opens Quick convert, which offers it.
@@ -191,6 +195,22 @@ pub fn open_quick(request: Request, cx: &mut App) {
             cx.set_global(Open(handle, view.downgrade()));
         }
         Err(e) => tracing::error!(error = %e, "could not open Quick convert"),
+    }
+    cx.activate(true);
+}
+
+/// Opens a window asking for a caption for `files`, GIFs all.
+pub fn open_caption(files: Vec<PathBuf>, cx: &mut App) {
+    let app = model::shared(cx);
+    let options = window_options(size(px(440.), px(300.)), "Add a caption", cx);
+    match gpui_kit::open_window(options, cx, |window, cx| {
+        cx.new(|cx| CaptionView::new(app, files, window, cx))
+    }) {
+        Ok((handle, view)) => {
+            let _ = handle.update(cx, |_, window, _| crate::icon::apply(window));
+            cx.set_global(Open(handle, view.downgrade()));
+        }
+        Err(e) => tracing::error!(error = %e, "could not open Add a caption"),
     }
     cx.activate(true);
 }
