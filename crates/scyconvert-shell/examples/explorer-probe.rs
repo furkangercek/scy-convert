@@ -112,7 +112,12 @@ fn main() -> windows::core::Result<()> {
             }
             let got = entries(&root, &items)?;
             assert_eq!(got, want, "{title}");
-            println!("{title} >");
+            let icon = root.GetIcon(&items)?;
+            println!(
+                "{title} > (icon {})",
+                String::from_utf16_lossy(icon.as_wide())
+            );
+            CoTaskMemFree(Some(icon.0.cast()));
             for line in &got {
                 println!("  {line}");
             }
