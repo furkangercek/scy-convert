@@ -4,11 +4,13 @@
 #   packaging/macos/package.sh [arm64|x86_64]   (default: this Mac's architecture)
 #
 # Needs Xcode (GPUI compiles Metal shaders) and rustup. The app bundles the
-# CLI, a static FFmpeg/ffprobe and PDFium. Office documents use a separately
-# installed LibreOffice from /Applications.
+# CLI, a static FFmpeg/ffprobe, PDFium and the Finder Sync extension. Office
+# documents use a separately installed LibreOffice from /Applications.
 #
 # The app is ad-hoc signed, not notarized: on first launch macOS asks to
 # confirm it (right-click > Open, or System Settings > Privacy & Security).
+# Without a team ID the Finder extension can't share the app's App Group, so
+# its menu offers "Open in scyconvert..." (Quick convert) instead of formats.
 set -euo pipefail
 
 arch=${1:-$(uname -m)}
@@ -18,6 +20,7 @@ out="$root/packaging/out/macos-$arch"
 cache="$root/packaging/.cache"
 version=$(sed -n 's/^version = "\(.*\)"/\1/p' "$root/Cargo.toml" | head -1)
 min_macos=13.0
+app_group=io.github.furkangercek.scyconvert
 
 # FFmpeg: Martin Riedl's static release builds (https://ffmpeg.martin-riedl.de).
 case "$arch" in
@@ -41,7 +44,7 @@ bin="$root/target/$triple/release"
 app="$out/scyconvert.app"
 contents="$app/Contents"
 rm -rf "$app"
-mkdir -p "$contents/MacOS" "$contents/Frameworks" "$contents/Resources/licenses"
+mkdir -p "$contents/MacOS" "$contents/Frameworks" "$contents/Resources/licenses" "$contents/PlugIns"
 
 cp "$bin/scyconvert-app" "$bin/scyconvert" "$contents/MacOS/"
 
@@ -73,7 +76,18 @@ cp "$cache/pdfium-$pdfium/LICENSE" "$contents/Resources/licenses/PDFium.txt"
 echo "FFmpeg 9.0.2 static build by Martin Riedl, GPL. Source: https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz" \
   > "$contents/Resources/licenses/FFmpeg.txt"
 
-sed -e "s/@VERSION@/$version/g" -e "s/@MIN_MACOS@/$min_macos/g" "$here/Info.plist" > "$contents/Info.plist"
+fill() { # template dest
+  sed -e "s/@VERSION@/$version/g" -e "s/@BUILD@/$version/g" -e "s/@APP_GROUP@/$app_group/g"     -e "s/@MIN_MACOS@/$min_macos/g" "$1" > "$2"
+}
+
+# Finder Sync extension: "Convert with scyconvert" in Finder's right-click menu.
+ext_src="$root/integrations/macos/FinderSync"
+appex="$contents/PlugIns/FinderSync.appex"
+mkdir -p "$appex/Contents/MacOS"
+xcrun --sdk macosx swiftc -O -target "$arch-apple-macos$min_macos" -sdk "$(xcrun --sdk macosx --show-sdk-path)"   -module-name ScyconvertFinderSync -parse-as-library -application-extension   -Xlinker -e -Xlinker _NSExtensionMain -framework FinderSync -framework Cocoa   "$ext_src/FinderSync.swift" -o "$appex/Contents/MacOS/FinderSync"
+fill "$ext_src/Info.plist" "$appex/Contents/Info.plist"
+
+fill "$here/Info.plist" "$contents/Info.plist"
 printf 'APPL????' > "$contents/PkgInfo"
 if [ -f "$root/packaging/icon.icns" ]; then
   cp "$root/packaging/icon.icns" "$contents/Resources/scyconvert.icns"
@@ -84,7 +98,10 @@ codesign --force --sign - --timestamp=none "$contents/Frameworks/libpdfium.dylib
 for name in ffmpeg ffprobe scyconvert; do
   codesign --force --sign - --timestamp=none "$contents/MacOS/$name"
 done
-codesign --force --sign - --timestamp=none "$app"
+fill "$ext_src/FinderSync.entitlements" "$out/FinderSync.entitlements"
+fill "$here/scyconvert.entitlements" "$out/scyconvert.entitlements"
+codesign --force --sign - --timestamp=none --entitlements "$out/FinderSync.entitlements" "$appex"
+codesign --force --sign - --timestamp=none --entitlements "$out/scyconvert.entitlements" "$app"
 codesign --verify --strict "$app"
 
 dmg="$root/packaging/out/scyconvert-$version-macos-$arch.dmg"

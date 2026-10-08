@@ -2,7 +2,7 @@
 
 A Finder Sync extension that adds **Convert with scyconvert** to Finder's right-click menu.
 
-**Status: not shipped.** `packaging/macos/package.sh` does not bundle the extension. It only works with a Developer ID signature that grants the App Group; an ad-hoc build can't. The Services menu entry below works without it.
+`packaging/macos/package.sh` bundles and ad-hoc signs the extension. Turn it on in System Settings > General > Login Items & Extensions (Finder extensions). An ad-hoc build has no team ID, so macOS doesn't share the App Group between the app and the extension: the menu then offers only **Open in scyconvert…**, which opens Quick convert. The per-format submenu needs both bundles signed by the same Developer ID team, with the group prefixed by the team ID.
 
 ## The menu
 
@@ -14,4 +14,4 @@ A Finder Sync extension that adds **Convert with scyconvert** to Finder's right-
 
 ## Building
 
-The old release tooling compiled `FinderSync/FinderSync.swift` with `swiftc -application-extension -framework FinderSync`, filled `FinderSync/Info.plist`, placed it in `scyconvert.app/Contents/PlugIns/FinderSync.appex` and signed it inside out with matching App Group entitlements. Adding that to `package.sh` needs a signing identity and team ID.
+`packaging/macos/package.sh` compiles `FinderSync/FinderSync.swift` with `swiftc -application-extension` (no Xcode project), fills `FinderSync/Info.plist`, places it at `scyconvert.app/Contents/PlugIns/FinderSync.appex` and signs it inside out with `FinderSync.entitlements` before the app.

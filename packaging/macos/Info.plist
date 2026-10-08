@@ -26,6 +26,9 @@
 	<array>
 		<string>MacOSX</string>
 	</array>
+	<!-- The Finder extension reads the app's target list from this group. -->
+	<key>ScyconvertAppGroup</key>
+	<string>@APP_GROUP@</string>
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.utilities</string>
 	<key>LSMinimumSystemVersion</key>
