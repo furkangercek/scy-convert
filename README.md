@@ -50,4 +50,4 @@ Pushing a `v*` tag runs `.github/workflows/release.yml`, which builds both platf
 
 ## License
 
-AGPL-3.0-only, see [LICENSE](LICENSE). scyconvert is based on [convt](https://github.com/opencoredev/convt) by opencoredev. Bundled FFmpeg is GPL and PDFium is BSD-3-Clause; their licenses ship in the install's `licenses` folder.
+AGPL-3.0-only, see [LICENSE](LICENSE). Bundled FFmpeg is GPL and PDFium is BSD-3-Clause; their licenses ship in the install's `licenses` folder.
