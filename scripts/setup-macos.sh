@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Homebrew packages for building convt on macOS. GPUI needs Xcode (Metal), not
+# Homebrew packages for building scyconvert on macOS. GPUI needs Xcode (Metal), not
 # just the command-line tools.
 set -euo pipefail
 

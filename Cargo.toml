@@ -1,11 +1,11 @@
 [workspace]
 resolver = "3"
 members = ["crates/*"]
-# Plain `cargo build` skips the GPUI app. Build it with `cargo build -p convt-app`.
+# Plain `cargo build` skips the GPUI app. Build it with `cargo build -p scyconvert-app`.
 default-members = [
-  "crates/convt-core",
-  "crates/convt-engines",
-  "crates/convt-cli",
+  "crates/scyconvert-core",
+  "crates/scyconvert-engines",
+  "crates/scyconvert-cli",
 ]
 
 [workspace.package]
@@ -13,8 +13,8 @@ version = "0.2.0"
 edition = "2024"
 rust-version = "1.95"
 license = "AGPL-3.0-only"
-repository = "https://github.com/opencoredev/convt"
-authors = ["Convt"]
+repository = "https://github.com/opencoredev/scyconvert"
+authors = ["Scyconvert"]
 
 [patch.crates-io]
 # gpui-pre-macos 0.3.7 unwraps NSString UTF-8 pointers while GPUI is starting.
@@ -22,8 +22,8 @@ authors = ["Convt"]
 gpui-pre-macos = { path = "vendor/gpui-pre-macos" }
 
 [workspace.dependencies]
-convt-core = { path = "crates/convt-core" }
-convt-engines = { path = "crates/convt-engines" }
+scyconvert-core = { path = "crates/scyconvert-core" }
+scyconvert-engines = { path = "crates/scyconvert-engines" }
 
 anyhow = "1.0.104"
 clap = { version = "4.6.7", features = ["derive"] }

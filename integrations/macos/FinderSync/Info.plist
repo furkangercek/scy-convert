@@ -5,15 +5,15 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
 	<key>CFBundleDisplayName</key>
-	<string>convt</string>
+	<string>scyconvert</string>
 	<key>CFBundleExecutable</key>
 	<string>FinderSync</string>
 	<key>CFBundleIdentifier</key>
-	<string>app.convt.desktop.FinderSync</string>
+	<string>io.github.furkangercek.scyconvert.FinderSync</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>convt</string>
+	<string>scyconvert</string>
 	<key>CFBundlePackageType</key>
 	<string>XPC!</string>
 	<key>CFBundleShortVersionString</key>
@@ -24,7 +24,7 @@
 	</array>
 	<key>CFBundleVersion</key>
 	<string>@BUILD@</string>
-	<key>ConvtAppGroup</key>
+	<key>ScyconvertAppGroup</key>
 	<string>@APP_GROUP@</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>@MIN_MACOS@</string>
@@ -35,7 +35,7 @@
 		<key>NSExtensionPointIdentifier</key>
 		<string>com.apple.FinderSync</string>
 		<key>NSExtensionPrincipalClass</key>
-		<string>ConvtFinderSync.FinderSync</string>
+		<string>ScyconvertFinderSync.FinderSync</string>
 	</dict>
 </dict>
 </plist>

@@ -2,7 +2,7 @@ import Cocoa
 import FinderSync
 
 /// The formats each input can become, as the app publishes them to the App
-/// Group container (`crates/convt-app/src/macos.rs`). The extension is
+/// Group container (`crates/scyconvert-app/src/macos.rs`). The extension is
 /// sandboxed and runs from its own executable, so it doesn't probe tools
 /// itself: that could offer different targets than the app can convert.
 private struct TargetList: Decodable {
@@ -19,14 +19,14 @@ private struct Target: Decodable {
     let category: String
 }
 
-/// Adds "Convert with convt" to Finder's context menu. The extension only
+/// Adds "Convert with scyconvert" to Finder's context menu. The extension only
 /// builds the menu and hands the job to the main app, because sandboxed
 /// extensions shouldn't run long conversions themselves.
 ///
 /// Picking a format converts in place with no window; "More options…" opens
 /// Quick convert. Either way the request goes through the App Group
 /// container (see `send`), which only processes in the group can write, so a
-/// `convt://` link from a web page can never start a conversion.
+/// `scyconvert://` link from a web page can never start a conversion.
 final class FinderSync: FIFinderSync {
     override init() {
         super.init()
@@ -40,7 +40,7 @@ final class FinderSync: FIFinderSync {
               !items.isEmpty
         else { return nil }
 
-        let submenu = NSMenu(title: "Convert with convt")
+        let submenu = NSMenu(title: "Convert with scyconvert")
         if let list = loadTargets() {
             // Offer only targets every selected file supports.
             let perFile = items.map { url -> [Target] in
@@ -71,11 +71,11 @@ final class FinderSync: FIFinderSync {
             // The app hasn't published its list yet (it has never run, or
             // the list is unreadable): let the app work out the targets
             // rather than guess from the format table.
-            submenu.addItem(moreItem(title: "Open in convt…"))
+            submenu.addItem(moreItem(title: "Open in scyconvert…"))
         }
 
         let menu = NSMenu(title: "")
-        let root = NSMenuItem(title: "Convert with convt", action: nil, keyEquivalent: "")
+        let root = NSMenuItem(title: "Convert with scyconvert", action: nil, keyEquivalent: "")
         root.image = NSImage(named: "MenuIconTemplate")
         root.submenu = submenu
         menu.addItem(root)
@@ -83,9 +83,9 @@ final class FinderSync: FIFinderSync {
     }
 
     /// The list the app wrote to the App Group container named by
-    /// `ConvtAppGroup` in this extension's Info.plist.
+    /// `ScyconvertAppGroup` in this extension's Info.plist.
     private func loadTargets() -> TargetList? {
-        guard let group = Bundle.main.object(forInfoDictionaryKey: "ConvtAppGroup") as? String,
+        guard let group = Bundle.main.object(forInfoDictionaryKey: "ScyconvertAppGroup") as? String,
               let dir = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: group),
               let data = try? Data(contentsOf: dir.appendingPathComponent("targets.json")),
               let list = try? JSONDecoder().decode(TargetList.self, from: data),
@@ -111,7 +111,7 @@ final class FinderSync: FIFinderSync {
         }
         guard let target else {
             // The list changed since the menu was built: let the app decide.
-            NSLog("convt: no target named \(name); opening Quick convert")
+            NSLog("scyconvert: no target named \(name); opening Quick convert")
             send(to: nil, items: items, activate: true)
             return
         }
@@ -134,20 +134,20 @@ final class FinderSync: FIFinderSync {
 
     /// Hands the selection to the app. AppKit drops launch arguments from
     /// sandboxed callers, so the request goes into the App Group container
-    /// and `convt://finder` only wakes the app, which takes it from there. The
+    /// and `scyconvert://finder` only wakes the app, which takes it from there. The
     /// link is opened with this bundle's app by path, because another app may
-    /// also claim the `convt` scheme.
+    /// also claim the `scyconvert` scheme.
     private func send(to: String?, items: [URL], activate: Bool) {
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.activates = activate
         configuration.addsToRecentItems = false
         let done: (NSRunningApplication?, Error?) -> Void = { _, error in
             if let error {
-                NSLog("convt: could not start the app: \(error.localizedDescription)")
+                NSLog("scyconvert: could not start the app: \(error.localizedDescription)")
             }
         }
         do {
-            guard let group = Bundle.main.object(forInfoDictionaryKey: "ConvtAppGroup") as? String,
+            guard let group = Bundle.main.object(forInfoDictionaryKey: "ScyconvertAppGroup") as? String,
                   let container = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: group)
             else { throw CocoaError(.fileNoSuchFile) }
             let dir = container.appendingPathComponent("requests", isDirectory: true)
@@ -160,20 +160,20 @@ final class FinderSync: FIFinderSync {
         } catch {
             // No usable shared container (an ad-hoc build, which macOS
             // doesn't grant the group), or a selection too large for one
-            // request: open the files with convt instead, which shows Quick
+            // request: open the files with scyconvert instead, which shows Quick
             // convert.
-            NSLog("convt: could not leave a request (\(error.localizedDescription)); opening the files instead")
+            NSLog("scyconvert: could not leave a request (\(error.localizedDescription)); opening the files instead")
             NSWorkspace.shared.open(items, withApplicationAt: appURL, configuration: configuration, completionHandler: done)
             return
         }
-        NSWorkspace.shared.open([URL(string: "convt://finder")!], withApplicationAt: appURL, configuration: configuration, completionHandler: done)
+        NSWorkspace.shared.open([URL(string: "scyconvert://finder")!], withApplicationAt: appURL, configuration: configuration, completionHandler: done)
     }
 
-    /// convt.app, which contains this extension at Contents/PlugIns/<name>.appex.
+    /// scyconvert.app, which contains this extension at Contents/PlugIns/<name>.appex.
     private var appURL: URL {
         Bundle.main.bundleURL
             .deletingLastPathComponent() // PlugIns
             .deletingLastPathComponent() // Contents
-            .deletingLastPathComponent() // convt.app
+            .deletingLastPathComponent() // scyconvert.app
     }
 }

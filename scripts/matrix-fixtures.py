@@ -12,13 +12,13 @@ import tempfile
 import zipfile
 
 def heif_library_name():
-    if os.environ.get('CONVT_LIBHEIF_DIR'):
+    if os.environ.get('SCYCONVERT_LIBHEIF_DIR'):
         library = 'heif.dll' if sys.platform == 'win32' else ('libheif.1.dylib' if sys.platform == 'darwin' else 'libheif.so.1')
-        return str(Path(os.environ['CONVT_LIBHEIF_DIR']) / library)
+        return str(Path(os.environ['SCYCONVERT_LIBHEIF_DIR']) / library)
     return ctypes.util.find_library('heif')
 
 
-MARKER = 'CONVT_MATRIX_7F3A'
+MARKER = 'SCYCONVERT_MATRIX_7F3A'
 NS = ('xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" '
       'xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" '
       'xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" '
@@ -29,8 +29,8 @@ NS = ('xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" '
 
 def office_convert(src, target, dest):
     dest.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix='convt-office-profile-') as profile:
-        tool = os.environ.get('CONVT_MATRIX_SOFFICE') or os.environ.get('CONVT_SOFFICE') or shutil.which('soffice') or shutil.which('libreoffice')
+    with tempfile.TemporaryDirectory(prefix='scyconvert-office-profile-') as profile:
+        tool = os.environ.get('SCYCONVERT_MATRIX_SOFFICE') or os.environ.get('SCYCONVERT_SOFFICE') or shutil.which('soffice') or shutil.which('libreoffice')
         result = subprocess.run([tool, '-env:UserInstallation=' + Path(profile).as_uri(),
                                  '--headless', '--norestore', '--convert-to', target,
                                  '--outdir', str(dest), str(src)], capture_output=True, timeout=60)
@@ -59,7 +59,7 @@ def office_fixture(dest, kind):
 def make_pdf(path):
     objects = [b'<< /Type /Catalog /Pages 2 0 R >>', b'<< /Type /Pages /Kids [3 0 R 5 0 R] /Count 2 >>']
     for number, color in [(1, '1 0 0'), (2, '0 0 1')]:
-        stream = f'{color} rg 8 8 24 24 re f 0 0 0 rg BT /F1 22 Tf 8 44 Td (CONVT) Tj ET BT /F1 8 Tf 8 64 Td ({MARKER}_PAGE_{number}) Tj ET'.encode()
+        stream = f'{color} rg 8 8 24 24 re f 0 0 0 rg BT /F1 22 Tf 8 44 Td (SCYCONVERT) Tj ET BT /F1 8 Tf 8 64 Td ({MARKER}_PAGE_{number}) Tj ET'.encode()
         objects += [f'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 144 72] /Resources << /Font << /F1 7 0 R >> >> /Contents {4 if number == 1 else 6} 0 R >>'.encode(), b'<< /Length ' + str(len(stream)).encode() + b' >>\nstream\n' + stream + b'\nendstream']
     objects.append(b'<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>')
     data = bytearray(b'%PDF-1.4\n')
@@ -77,7 +77,7 @@ def make_pdf(path):
 
 def pdf_library():
     library = 'pdfium.dll' if sys.platform == 'win32' else ('libpdfium.dylib' if sys.platform == 'darwin' else 'libpdfium.so')
-    candidates = [Path(os.environ.get('CONVT_PDFIUM_DIR', '/nonexistent')) / library,
+    candidates = [Path(os.environ.get('SCYCONVERT_PDFIUM_DIR', '/nonexistent')) / library,
                   Path(__file__).resolve().parents[1] / 'vendor/pdfium/lib' / library]
     lib = None
     for candidate in candidates:
@@ -145,7 +145,7 @@ def ffmpeg_heic(dest):
     u16 = lambda n: struct.pack('>H', n)
     u32 = lambda n: struct.pack('>I', n)
     box = lambda tag, data: u32(8 + len(data)) + tag + data
-    tool = os.environ.get('CONVT_FFMPEG') or shutil.which('ffmpeg')
+    tool = os.environ.get('SCYCONVERT_FFMPEG') or shutil.which('ffmpeg')
     if not tool:
         sys.exit(77)
     def encode(alpha):
@@ -171,7 +171,7 @@ def ffmpeg_heic(dest):
     color_hvcc, color_sample = encode(False)
     alpha_hvcc, alpha_sample = encode(True)
     ftyp = box(b'ftyp', b'heic' + u32(0) + b'heicmif1')
-    hdlr = box(b'hdlr', bytes(8) + b'pict' + bytes(12) + b'convt\0')
+    hdlr = box(b'hdlr', bytes(8) + b'pict' + bytes(12) + b'scyconvert\0')
     pitm = box(b'pitm', bytes(4) + u16(1))
     def infe(item):
         return box(b'infe', b'\x02' + bytes(3) + u16(item) + u16(0) + b'hvc1' + b'pattern\0')
@@ -308,7 +308,7 @@ def office_check(path, kind):
         assert data.startswith(b'{\\rtf'), 'Wrong RTF magic'
     elif ext == 'html':
         assert b'<html' in data.lower(), 'Wrong HTML magic'
-    with tempfile.TemporaryDirectory(prefix='convt-office-check-') as tmp:
+    with tempfile.TemporaryDirectory(prefix='scyconvert-office-check-') as tmp:
         if kind == 'Spreadsheet':
             import csv
             out = path if ext == 'csv' else office_convert(path, 'csv:Text - txt - csv (StarCalc):44,34,76', Path(tmp))
@@ -343,7 +343,7 @@ if __name__ == '__main__':
         kind, target = rest
         src = office_fixture(path, kind)
         if target != kind:
-            with tempfile.TemporaryDirectory(prefix='convt-office-fixture-') as tmp:
+            with tempfile.TemporaryDirectory(prefix='scyconvert-office-fixture-') as tmp:
                 out = office_convert(src, target, Path(tmp))
                 shutil.copyfile(out, path / ('sample.' + target))
         if pdf_library() is not None:

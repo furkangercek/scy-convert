@@ -13,4 +13,4 @@ export PATH="$HOME/.cargo/bin:$PATH"
 rustup show active-toolchain >/dev/null  # installs the version in rust-toolchain.toml
 
 bash scripts/fetch-pdfium.sh
-echo "Done. Try: cargo run -p convt-cli -- formats"
+echo "Done. Try: cargo run -p scyconvert-cli -- formats"

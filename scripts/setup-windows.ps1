@@ -18,4 +18,4 @@ Invoke-WebRequest "https://github.com/bblanchon/pdfium-binaries/releases/latest/
 tar -xzf $tgz -C $dest
 # Windows ships the DLL in bin/, the engine looks in lib/
 Copy-Item "$dest\bin\pdfium.dll" "$dest\lib\" -Force
-Write-Host "Done. Try: cargo run -p convt-cli -- formats"
+Write-Host "Done. Try: cargo run -p scyconvert-cli -- formats"

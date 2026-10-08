@@ -1187,90 +1187,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "convt-app"
-version = "0.2.0"
-dependencies = [
- "convt-core",
- "convt-engines",
- "dirs 6.0.0",
- "futures",
- "gpui-kit",
- "image",
- "libc",
- "objc",
- "rusqlite",
- "serde",
- "serde_json",
- "tempfile",
- "toml 0.8.23",
- "tracing",
- "tracing-subscriber",
- "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "convt-cli"
-version = "0.2.0"
-dependencies = [
- "anyhow",
- "clap",
- "convt-core",
- "convt-engines",
- "ctrlc",
- "image",
- "libc",
- "serde_json",
- "tempfile",
- "which",
-]
-
-[[package]]
-name = "convt-core"
-version = "0.2.0"
-dependencies = [
- "serde",
- "tempfile",
- "thiserror 2.0.21",
- "toml 0.8.23",
- "tracing",
-]
-
-[[package]]
-name = "convt-engines"
-version = "0.2.0"
-dependencies = [
- "anyhow",
- "convt-core",
- "dirs 6.0.0",
- "flate2",
- "image",
- "libc",
- "libloading 0.8.9",
- "pdfium-render",
- "png 0.18.1",
- "resvg 0.48.1",
- "serde_json",
- "sha2 0.10.9",
- "tar",
- "tempfile",
- "tracing",
- "ureq",
- "url",
- "which",
- "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "convt-shell"
-version = "0.2.0"
-dependencies = [
- "serde",
- "serde_json",
- "windows 0.62.2",
- "windows-core 0.62.2",
-]
-
-[[package]]
 name = "core-foundation"
 version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6394,6 +6310,90 @@ dependencies = [
  "objc-foundation",
  "objc_id",
  "once_cell",
+]
+
+[[package]]
+name = "scyconvert-app"
+version = "0.2.0"
+dependencies = [
+ "dirs 6.0.0",
+ "futures",
+ "gpui-kit",
+ "image",
+ "libc",
+ "objc",
+ "rusqlite",
+ "scyconvert-core",
+ "scyconvert-engines",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "toml 0.8.23",
+ "tracing",
+ "tracing-subscriber",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "scyconvert-cli"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "ctrlc",
+ "image",
+ "libc",
+ "scyconvert-core",
+ "scyconvert-engines",
+ "serde_json",
+ "tempfile",
+ "which",
+]
+
+[[package]]
+name = "scyconvert-core"
+version = "0.2.0"
+dependencies = [
+ "serde",
+ "tempfile",
+ "thiserror 2.0.21",
+ "toml 0.8.23",
+ "tracing",
+]
+
+[[package]]
+name = "scyconvert-engines"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "dirs 6.0.0",
+ "flate2",
+ "image",
+ "libc",
+ "libloading 0.8.9",
+ "pdfium-render",
+ "png 0.18.1",
+ "resvg 0.48.1",
+ "scyconvert-core",
+ "serde_json",
+ "sha2 0.10.9",
+ "tar",
+ "tempfile",
+ "tracing",
+ "ureq",
+ "url",
+ "which",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "scyconvert-shell"
+version = "0.2.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "windows 0.62.2",
+ "windows-core 0.62.2",
 ]
 
 [[package]]
