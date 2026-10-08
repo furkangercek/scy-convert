@@ -3,6 +3,7 @@
 //! on macOS and a page of the main window elsewhere; the menu bar popover
 //! belongs to the tray.
 
+mod advanced;
 mod main_window;
 mod pack;
 mod popover;
@@ -252,6 +253,33 @@ fn describe(preset: &Preset) -> String {
     }
     if let Some(background) = o.background {
         parts.push(format!("{} background", background.name().to_lowercase()));
+    }
+    if let Some(hw) = o.hardware {
+        parts.push(hw.name().into());
+    }
+    if let Some(b) = o.video_bitrate {
+        parts.push(format!("{b} kbit/s video"));
+    }
+    if let Some(fps) = o.fps {
+        parts.push(format!("{fps} fps"));
+    }
+    if let Some(crop) = o.crop {
+        parts.push(format!("cropped {}", crop.id()));
+    }
+    if o.start.is_some() || o.end.is_some() {
+        parts.push("trimmed".into());
+    }
+    if let Some(speed) = o.speed {
+        parts.push(format!("{}x speed", f64::from(speed) / 100.));
+    }
+    if let Some(codec) = o.audio_codec {
+        parts.push(format!("{} audio", codec.name()));
+    }
+    if let Some(channels) = o.channels {
+        parts.push(channels.name().to_lowercase());
+    }
+    if o.normalize {
+        parts.push("even loudness".into());
     }
     parts.join(", ")
 }

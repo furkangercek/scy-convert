@@ -3,10 +3,11 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use anyhow::{Context, bail};
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
 use scyconvert_core::{
-    Background, Cancel, Category, Event, FORMATS, Job, Options, Output, PageRange, Preset,
-    VideoCodec, expand_inputs, format_by_extension, format_by_id, run_batch,
+    Aspect, AudioCodec, Background, Cancel, Category, Channels, EncoderSpeed, Event, FORMATS, Flip,
+    FrameRate, Hardware, Job, Options, Output, PageRange, Preset, Rotation, Timestamp, VideoCodec,
+    expand_inputs, format_by_extension, format_by_id, run_batch,
 };
 use serde_json::json;
 
@@ -50,7 +51,7 @@ struct Cli {
     /// Audio bitrate in kbit/s
     #[arg(long, value_name = "KBPS")]
     audio_bitrate: Option<u32>,
-    /// Video encoder for MP4, MOV and MKV: h264 (default) or hevc
+    /// Video encoder: h264, hevc, av1, vp9, prores or copy (default: the container's usual one)
     #[arg(long, value_name = "CODEC")]
     video_codec: Option<VideoCodec>,
     /// Leave the audio out of video output
@@ -68,6 +69,86 @@ struct Cli {
     /// Print one JSON event per line on stdout
     #[arg(long)]
     json: bool,
+    #[command(flatten)]
+    media: MediaArgs,
+}
+
+/// Video and audio options beyond the basics.
+#[derive(Args)]
+#[command(next_help_heading = "Video and audio")]
+struct MediaArgs {
+    /// Encode video on the GPU: nvenc, qsv, amf or videotoolbox
+    #[arg(long, value_name = "GPU")]
+    hardware: Option<Hardware>,
+    /// Encoder speed: fastest, fast, medium (default), slow or slowest
+    #[arg(long, value_name = "SPEED")]
+    encoder_speed: Option<EncoderSpeed>,
+    /// Target video bitrate in kbit/s, instead of --quality
+    #[arg(long, value_name = "KBPS")]
+    video_bitrate: Option<u32>,
+    /// Output frame rate, e.g. 30 or 29.97
+    #[arg(long)]
+    fps: Option<FrameRate>,
+    /// 10-bit color (HEVC, AV1, VP9, ProRes)
+    #[arg(long)]
+    ten_bit: bool,
+    /// Crop around the center to 16:9, 9:16, 1:1, 4:3, 4:5 or 21:9
+    #[arg(long, value_name = "RATIO")]
+    crop: Option<Aspect>,
+    /// Rotate clockwise: 90, 180 or 270
+    #[arg(long, value_name = "DEGREES")]
+    rotate: Option<Rotation>,
+    /// Mirror: horizontal, vertical or both
+    #[arg(long)]
+    flip: Option<Flip>,
+    /// Remove interlacing lines
+    #[arg(long)]
+    deinterlace: bool,
+    /// Smooth out grain and noise
+    #[arg(long)]
+    denoise: bool,
+    /// Black and white
+    #[arg(long)]
+    grayscale: bool,
+    /// Start at this time in the input: 90, 1.5 or 1:30
+    #[arg(long, value_name = "TIME")]
+    start: Option<Timestamp>,
+    /// Stop at this time in the input
+    #[arg(long, value_name = "TIME")]
+    end: Option<Timestamp>,
+    /// Playback speed in percent, 25 to 400 (audio keeps its pitch)
+    #[arg(long, value_name = "PERCENT")]
+    speed: Option<u16>,
+    /// Fade in over this long, e.g. 1.5
+    #[arg(long, value_name = "SECONDS")]
+    fade_in: Option<Timestamp>,
+    /// Fade out over this long
+    #[arg(long, value_name = "SECONDS")]
+    fade_out: Option<Timestamp>,
+    /// Audio encoder for video and M4A: aac, opus, mp3, ac3, flac, alac or copy
+    #[arg(long, value_name = "CODEC")]
+    audio_codec: Option<AudioCodec>,
+    /// Sample rate in Hz, e.g. 44100 or 48000
+    #[arg(long, value_name = "HZ")]
+    sample_rate: Option<u32>,
+    /// mono or stereo
+    #[arg(long)]
+    channels: Option<Channels>,
+    /// Volume change in dB, -30 to 30
+    #[arg(long, value_name = "DB", allow_negative_numbers = true)]
+    volume: Option<i8>,
+    /// Even out loudness (EBU R128)
+    #[arg(long)]
+    normalize: bool,
+    /// Bits per sample for WAV and FLAC: 16 or 24
+    #[arg(long, value_name = "BITS")]
+    bit_depth: Option<u8>,
+    /// Cut silence from the start and end
+    #[arg(long)]
+    trim_silence: bool,
+    /// Leave out titles, dates, GPS and other metadata
+    #[arg(long)]
+    strip_metadata: bool,
 }
 
 #[derive(Subcommand)]
@@ -293,6 +374,30 @@ fn convert(cli: Cli, registry: &scyconvert_core::Registry) -> anyhow::Result<()>
         video_codec: cli.video_codec,
         strip_audio: cli.no_audio,
         background: cli.background,
+        hardware: cli.media.hardware,
+        encoder_speed: cli.media.encoder_speed,
+        video_bitrate: cli.media.video_bitrate,
+        fps: cli.media.fps,
+        ten_bit: cli.media.ten_bit,
+        crop: cli.media.crop,
+        rotate: cli.media.rotate,
+        flip: cli.media.flip,
+        deinterlace: cli.media.deinterlace,
+        denoise: cli.media.denoise,
+        grayscale: cli.media.grayscale,
+        start: cli.media.start,
+        end: cli.media.end,
+        speed: cli.media.speed,
+        fade_in: cli.media.fade_in,
+        fade_out: cli.media.fade_out,
+        audio_codec: cli.media.audio_codec,
+        sample_rate: cli.media.sample_rate,
+        channels: cli.media.channels,
+        volume_db: cli.media.volume,
+        normalize: cli.media.normalize,
+        bit_depth: cli.media.bit_depth,
+        trim_silence: cli.media.trim_silence,
+        strip_metadata: cli.media.strip_metadata,
     }
     .or(&preset.map(|p| p.options).unwrap_or_default());
     options.validate()?;

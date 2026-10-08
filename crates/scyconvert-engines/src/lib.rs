@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 use scyconvert_core::{Ctx, Error, Registry, Result};
 
 pub mod ffmpeg;
+pub mod ffmpeg_args;
 pub mod heic;
 pub mod image;
 pub mod office;

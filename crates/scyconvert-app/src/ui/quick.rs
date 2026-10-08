@@ -6,14 +6,17 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use gpui_kit::component::input::InputState;
+use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::tooltip::Tooltip;
+use gpui_kit::component::{Icon, IconName};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 use scyconvert_core::{
-    Background, Category, Format, Options, Output, Registry, VideoCodec, format_by_id,
+    Background, Category, Format, Options, Output, Registry, Timestamp, VideoCodec, format_by_id,
 };
+use scyconvert_engines::ffmpeg_args::video_codec_choices;
 
+use super::advanced::{self, Control};
 use super::theme::{
     self, Choice, Palette, mono, primary_button, secondary_button, text, text_button,
 };
@@ -46,6 +49,8 @@ enum Open {
     Size,
     Codec,
     Background,
+    /// An advanced option's dropdown, by field id.
+    Field(&'static str),
 }
 
 pub struct QuickView {
@@ -70,6 +75,13 @@ pub struct QuickView {
     /// default: Transparent where the format keeps it, White where it can't.
     pub(super) background: Option<Background>,
     open: Option<Open>,
+    /// The advanced sections that are open, by id.
+    pub(super) expanded: Vec<&'static str>,
+    /// Trim and speed's time fields.
+    pub(super) start: Entity<InputState>,
+    pub(super) end: Entity<InputState>,
+    /// What a time field couldn't read, by field id.
+    time_errors: Vec<(&'static str, String)>,
     /// Where the files go. `None` is next to each file.
     pub(super) save_dir: Option<PathBuf>,
     pub(super) file_name: Entity<InputState>,
@@ -87,6 +99,7 @@ pub struct QuickView {
     generation: u64,
     _observe: Subscription,
     _appearance: Subscription,
+    _times: [Subscription; 2],
 }
 
 impl QuickView {
@@ -129,6 +142,28 @@ impl QuickView {
             error = Some("There are no files to convert here.".into());
         }
         let file_name = cx.new(|cx| InputState::new(window, cx));
+        let time = |window: &mut Window, cx: &mut Context<Self>| {
+            cx.new(|cx| InputState::new(window, cx).placeholder("0:00"))
+        };
+        let (start, end) = (time(window, cx), time(window, cx));
+        let follow =
+            |field: &'static str, input: &Entity<InputState>, window, cx: &mut Context<Self>| {
+                cx.subscribe_in(
+                    input,
+                    window,
+                    move |this: &mut Self, input, event, _, cx| {
+                        if matches!(event, InputEvent::Change) {
+                            let text = input.read(cx).value().trim().to_string();
+                            this.read_time(field, &text);
+                            cx.notify();
+                        }
+                    },
+                )
+            };
+        let _times = [
+            follow("start", &start, window, cx),
+            follow("end", &end, window, cx),
+        ];
         let mut view = Self {
             _observe: cx.observe_in(&app, window, |this: &mut Self, app, window, cx| {
                 this.remember(&app, cx);
@@ -148,6 +183,11 @@ impl QuickView {
             strip_audio: false,
             background: None,
             open: None,
+            expanded: Vec::new(),
+            start,
+            end,
+            time_errors: Vec::new(),
+            _times,
             save_dir,
             file_name,
             jobs: Vec::new(),
@@ -158,8 +198,40 @@ impl QuickView {
             generation,
         };
         view.load_controls();
+        view.load_times(window, cx);
         view.reset_name(window, cx);
         view
+    }
+
+    /// Stores a time field's text in the options, or what's wrong with it.
+    fn read_time(&mut self, field: &'static str, text: &str) {
+        self.time_errors.retain(|(f, _)| *f != field);
+        let value = match text {
+            "" => None,
+            text => match text.parse::<Timestamp>() {
+                Ok(t) => Some(t),
+                Err(e) => {
+                    self.time_errors.push((field, e.to_string()));
+                    None
+                }
+            },
+        };
+        match field {
+            "start" => self.options.start = value,
+            _ => self.options.end = value,
+        }
+    }
+
+    /// Shows the options' times in the time fields.
+    fn load_times(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        for (input, value) in [
+            (&self.start, self.options.start),
+            (&self.end, self.options.end),
+        ] {
+            let text = value.map(|t| t.to_string()).unwrap_or_default();
+            input.update(cx, |s, cx| s.set_value(text, window, cx));
+        }
+        self.time_errors.clear();
     }
 
     /// Recomputes the targets after the document pack was installed or
@@ -263,6 +335,7 @@ impl QuickView {
                     }
                 }
                 self.load_controls();
+                self.load_times(window, cx);
             }
             Err(e) => self.error = Some(e),
         }
@@ -280,8 +353,11 @@ impl QuickView {
     /// The options to convert with: the preset's, replaced by every control
     /// the target shows. Balanced and Original clear what a preset set.
     pub(super) fn conversion_options(&self) -> Options {
-        let mut options = self.options.clone();
-        let Some(to) = self.to else { return options };
+        let Some(to) = self.to else {
+            return self.options.clone();
+        };
+        // Advanced options the target doesn't show would only fail or be ignored.
+        let mut options = advanced::for_target(&self.options, to, !self.strip_audio);
         if quality_applies(to) {
             options.quality = self.quality;
         }
@@ -293,7 +369,9 @@ impl QuickView {
             }
         }
         if codec_applies(to) {
-            options.video_codec = self.video_codec;
+            options.video_codec = self
+                .video_codec
+                .filter(|c| video_codec_choices(to.id).contains(c));
         }
         if audio_applies(to) {
             options.strip_audio = self.strip_audio;
@@ -331,6 +409,10 @@ impl QuickView {
         let Some(to) = self.to else { return };
         let files = self.supported();
         if files.is_empty() || !self.jobs.is_empty() {
+            return;
+        }
+        // The time field already says what's wrong.
+        if !self.time_errors.is_empty() {
             return;
         }
         let options = self.conversion_options();
@@ -675,14 +757,13 @@ impl QuickView {
                 "Codec",
                 theme::select(
                     "codec",
-                    self.video_codec.unwrap_or(VideoCodec::H264).name(),
+                    self.video_codec
+                        .filter(|c| video_codec_choices(to.id).contains(c))
+                        .map_or(usual_codec(to), VideoCodec::name),
                     180.,
                     false,
                     self.open == Some(Open::Codec),
-                    VideoCodec::ALL
-                        .iter()
-                        .map(|c| Choice::new(c.id(), c.name()))
-                        .collect(),
+                    codec_menu(to),
                     p,
                     move |_, cx| {
                         let _ = toggle.update(cx, |this, cx| this.toggle(Open::Codec, cx));
@@ -773,6 +854,165 @@ impl QuickView {
                 .children(background)
                 .children(audio),
         )
+    }
+
+    fn toggle_section(&mut self, id: &'static str, cx: &mut Context<Self>) {
+        if let Some(i) = self.expanded.iter().position(|e| *e == id) {
+            self.expanded.remove(i);
+        } else {
+            self.expanded.push(id);
+        }
+        self.open = None;
+        cx.notify();
+    }
+
+    /// Collapsible sections of video and audio options.
+    fn advanced_section(&self, p: &Palette, cx: &mut Context<Self>) -> Option<Div> {
+        let to = self.to?;
+        let sections = advanced::sections(to, !self.strip_audio);
+        if sections.is_empty() {
+            return None;
+        }
+        let blocks = sections.into_iter().map(|section| {
+            let open = self.expanded.contains(&section.id);
+            let changed = section
+                .fields
+                .iter()
+                .filter(|f| f.changed(&self.options))
+                .count();
+            let id = section.id;
+            let header =
+                theme::clickable(SharedString::from(format!("section-{id}")), section.title)
+                    .aria_expanded(open)
+                    .flex()
+                    .items_center()
+                    .gap(px(8.))
+                    .py(px(4.))
+                    .on_click(cx.listener(move |this, _, _, cx| this.toggle_section(id, cx)))
+                    .child(
+                        Icon::new(if open {
+                            IconName::ChevronDown
+                        } else {
+                            IconName::ChevronRight
+                        })
+                        .size(px(10.))
+                        .text_color(p.secondary),
+                    )
+                    .child(
+                        text(13., 16., p.text)
+                            .font_weight(FontWeight::MEDIUM)
+                            .child(section.title),
+                    )
+                    .when(changed > 0, |d| {
+                        d.child(text(12., 16., p.green).child(format!("{changed} changed")))
+                    });
+            let rows = open.then(|| {
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(12.))
+                    .pt(px(8.))
+                    .pb(px(6.))
+                    .children(
+                        section
+                            .fields
+                            .into_iter()
+                            .map(|field| self.field_row(field, p, cx)),
+                    )
+            });
+            div().flex().flex_col().child(header).children(rows)
+        });
+        Some(
+            section(p)
+                .gap(px(6.))
+                .child(section_label("More options", p))
+                .children(blocks),
+        )
+    }
+
+    fn field_row(&self, field: advanced::Field, p: &Palette, cx: &mut Context<Self>) -> AnyElement {
+        let id = field.id;
+        match field.control {
+            Control::Select { choices, get, set } => {
+                let current = get(&self.options);
+                let shown = choices
+                    .iter()
+                    .find(|(choice, _)| choice.as_ref() == current)
+                    .map_or_else(|| SharedString::from(current), |(_, label)| label.clone());
+                let toggle = cx.entity().downgrade();
+                let pick = cx.entity().downgrade();
+                row_label(
+                    field.label,
+                    theme::select(
+                        id,
+                        shown,
+                        180.,
+                        false,
+                        self.open == Some(Open::Field(id)),
+                        choices
+                            .into_iter()
+                            .map(|(choice, label)| Choice::new(choice, label))
+                            .collect(),
+                        p,
+                        move |_, cx| {
+                            let _ = toggle.update(cx, |this, cx| this.toggle(Open::Field(id), cx));
+                        },
+                        move |choice, _, cx| {
+                            let _ = pick.update(cx, |this, cx| {
+                                set(&mut this.options, choice);
+                                this.open = None;
+                                cx.notify();
+                            });
+                        },
+                    ),
+                    p,
+                )
+                .into_any_element()
+            }
+            Control::Check { get, set } => {
+                let on = get(&self.options);
+                div()
+                    .flex()
+                    .pl(px(110.))
+                    .child(
+                        theme::checkbox(id, field.label, on, p).on_click(cx.listener(
+                            move |this, _, _, cx| {
+                                set(&mut this.options, !on);
+                                cx.notify();
+                            },
+                        )),
+                    )
+                    .into_any_element()
+            }
+            Control::Time { .. } => {
+                let input = if id == "start" {
+                    &self.start
+                } else {
+                    &self.end
+                };
+                let error = self
+                    .time_errors
+                    .iter()
+                    .find(|(f, _)| *f == id)
+                    .map(|(_, e)| e.clone());
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(4.))
+                    .child(row_label(
+                        field.label,
+                        div()
+                            .w(px(120.))
+                            .flex_shrink_0()
+                            .font_family(theme::MONO)
+                            .text_size(px(12.))
+                            .child(theme::small_field(input, id)),
+                        p,
+                    ))
+                    .children(error.map(|e| div().pl(px(110.)).child(error_text(e, p))))
+                    .into_any_element()
+            }
+        }
     }
 
     fn save_section(&self, p: &Palette, cx: &mut Context<Self>) -> Div {
@@ -984,7 +1224,30 @@ fn row_label(label: &'static str, control: impl IntoElement, p: &Palette) -> Div
 
 /// Whether the Codec control does anything for `to`.
 fn codec_applies(to: &Format) -> bool {
-    matches!(to.id, "mp4" | "mov" | "mkv")
+    !video_codec_choices(to.id).is_empty()
+}
+
+/// The codec `to` gets when none is picked.
+fn usual_codec(to: &Format) -> &'static str {
+    match to.id {
+        "webm" => VideoCodec::Vp9.name(),
+        "avi" => "MPEG-4",
+        _ => VideoCodec::H264.name(),
+    }
+}
+
+/// The Codec menu: AVI's usual MPEG-4, which no option names, then what the
+/// container takes.
+fn codec_menu(to: &Format) -> Vec<Choice> {
+    let usual = (to.id == "avi").then(|| Choice::new("mpeg4", "MPEG-4"));
+    usual
+        .into_iter()
+        .chain(
+            video_codec_choices(to.id)
+                .iter()
+                .map(|c| Choice::new(c.id(), c.name())),
+        )
+        .collect()
 }
 
 /// The source formats of `files`, by extension.
@@ -1190,6 +1453,9 @@ impl Render for QuickView {
             if let Some(options) = self.options_section(&p, cx) {
                 body.push(options.into_any_element());
             }
+            if let Some(advanced) = self.advanced_section(&p, cx) {
+                body.push(advanced.into_any_element());
+            }
             // Nothing to save while every file waits for the document pack.
             if !self.supported().is_empty() || waiting == 0 {
                 body.push(self.save_section(&p, cx).into_any_element());
@@ -1218,6 +1484,7 @@ impl Render for QuickView {
             .child(
                 div()
                     .id("quick-body")
+                    .test_support()
                     .flex()
                     .flex_col()
                     .flex_1()

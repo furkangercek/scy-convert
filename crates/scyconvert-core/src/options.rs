@@ -3,7 +3,16 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
+pub use crate::media::{
+    Aspect, AudioCodec, Channels, EncoderSpeed, Flip, FrameRate, Hardware, Rotation, Timestamp,
+    VideoCodec,
+};
 use crate::{Error, Result};
+
+/// Sample rates the options accept, in Hz.
+pub const SAMPLE_RATES: [u32; 9] = [
+    8000, 16000, 22050, 24000, 32000, 44100, 48000, 96000, 192000,
+];
 
 /// Settings for a conversion. Every field is optional; engines ignore the
 /// ones that don't apply to their output.
@@ -23,7 +32,7 @@ pub struct Options {
     pub pages: Option<PageRange>,
     /// Resolution for rendering PDF and SVG pages.
     pub dpi: Option<u32>,
-    /// Video encoder for MP4, MOV and MKV output. Unset means H.264.
+    /// Video encoder. Unset uses the container's usual codec.
     pub video_codec: Option<VideoCodec>,
     /// What transparent areas of an image become. Unset keeps transparency
     /// where the output format can store it and uses white where it can't.
@@ -31,56 +40,69 @@ pub struct Options {
     /// Leave the audio out of video output.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub strip_audio: bool,
-}
 
-/// A video encoder the user can pick for MP4, MOV and MKV output.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum VideoCodec {
-    /// H.264 (AVC): plays nearly everywhere.
-    H264,
-    /// H.265 (HEVC): smaller files, newer players.
-    Hevc,
-}
+    // Video encoding.
+    /// Encode video on this GPU instead of the CPU.
+    pub hardware: Option<Hardware>,
+    /// Encoder speed against file size. Unset is medium.
+    pub encoder_speed: Option<EncoderSpeed>,
+    /// Target video bitrate in kbit/s. Replaces `quality` for video.
+    pub video_bitrate: Option<u32>,
+    /// Output frame rate.
+    pub fps: Option<FrameRate>,
+    /// 10-bit color, for HEVC, AV1, VP9 and ProRes.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub ten_bit: bool,
 
-impl VideoCodec {
-    pub const ALL: [VideoCodec; 2] = [VideoCodec::H264, VideoCodec::Hevc];
+    // Picture.
+    /// Crop to this aspect ratio around the center.
+    pub crop: Option<Aspect>,
+    pub rotate: Option<Rotation>,
+    pub flip: Option<Flip>,
+    /// Remove interlacing lines from TV and camcorder footage.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub deinterlace: bool,
+    /// Smooth out grain and sensor noise.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub denoise: bool,
+    /// Black and white.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub grayscale: bool,
 
-    /// The id presets and the CLI use: `h264` or `hevc`.
-    pub fn id(self) -> &'static str {
-        match self {
-            VideoCodec::H264 => "h264",
-            VideoCodec::Hevc => "hevc",
-        }
-    }
+    // Timing, for video and audio.
+    /// Start here in the input.
+    pub start: Option<Timestamp>,
+    /// Stop here in the input.
+    pub end: Option<Timestamp>,
+    /// Playback speed in percent: 50 is half speed, 200 double. Audio keeps
+    /// its pitch.
+    pub speed: Option<u16>,
+    /// Fade in from black and silence over this long.
+    pub fade_in: Option<Timestamp>,
+    /// Fade out to black and silence over this long.
+    pub fade_out: Option<Timestamp>,
 
-    /// The name people know it by.
-    pub fn name(self) -> &'static str {
-        match self {
-            VideoCodec::H264 => "H.264",
-            VideoCodec::Hevc => "HEVC",
-        }
-    }
-}
+    // Audio.
+    /// Audio encoder for video output and M4A. Unset uses the container's
+    /// usual codec.
+    pub audio_codec: Option<AudioCodec>,
+    /// Sample rate in Hz, one of `SAMPLE_RATES`.
+    pub sample_rate: Option<u32>,
+    pub channels: Option<Channels>,
+    /// Volume change in decibels, -30 to 30.
+    pub volume_db: Option<i8>,
+    /// Even out loudness to the EBU R128 broadcast level.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub normalize: bool,
+    /// Bits per sample for WAV and FLAC: 16 or 24.
+    pub bit_depth: Option<u8>,
+    /// Cut silence from the start and end.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub trim_silence: bool,
 
-impl std::str::FromStr for VideoCodec {
-    type Err = Error;
-
-    fn from_str(s: &str) -> Result<Self> {
-        match s.to_ascii_lowercase().as_str() {
-            "h264" | "h.264" | "avc" => Ok(VideoCodec::H264),
-            "hevc" | "h265" | "h.265" => Ok(VideoCodec::Hevc),
-            _ => Err(Error::InvalidOption(format!(
-                "video codec {s:?}; use h264 or hevc"
-            ))),
-        }
-    }
-}
-
-impl std::fmt::Display for VideoCodec {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.id())
-    }
+    /// Leave out titles, dates, GPS and other metadata.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub strip_metadata: bool,
 }
 
 impl Options {
@@ -101,6 +123,45 @@ impl Options {
         if self.dpi.is_some_and(|d| !(18..=1200).contains(&d)) {
             return bad("dpi must be between 18 and 1200");
         }
+        if self
+            .video_bitrate
+            .is_some_and(|b| !(100..=500_000).contains(&b))
+        {
+            return bad("video bitrate must be between 100 and 500000 kbit/s");
+        }
+        if self
+            .fps
+            .is_some_and(|f| !(100..=24_000).contains(&f.hundredths))
+        {
+            return bad("frame rate must be between 1 and 240");
+        }
+        if let (Some(start), Some(end)) = (self.start, self.end)
+            && end <= start
+        {
+            return bad("the end must come after the start");
+        }
+        if self.speed.is_some_and(|s| !(25..=400).contains(&s)) {
+            return bad("speed must be between 25% and 400%");
+        }
+        let minute = Timestamp::from_secs(60);
+        if [self.fade_in, self.fade_out]
+            .iter()
+            .flatten()
+            .any(|f| *f > minute)
+        {
+            return bad("fades can be at most 60 seconds");
+        }
+        if self.sample_rate.is_some_and(|r| !SAMPLE_RATES.contains(&r)) {
+            return bad(
+                "sample rate must be 8000, 16000, 22050, 24000, 32000, 44100, 48000, 96000 or 192000",
+            );
+        }
+        if self.volume_db.is_some_and(|v| !(-30..=30).contains(&v)) {
+            return bad("volume must be between -30 and 30 dB");
+        }
+        if self.bit_depth.is_some_and(|b| b != 16 && b != 24) {
+            return bad("bit depth must be 16 or 24");
+        }
         Ok(())
     }
 
@@ -116,6 +177,30 @@ impl Options {
             video_codec: self.video_codec.or(base.video_codec),
             background: self.background.or(base.background),
             strip_audio: self.strip_audio || base.strip_audio,
+            hardware: self.hardware.or(base.hardware),
+            encoder_speed: self.encoder_speed.or(base.encoder_speed),
+            video_bitrate: self.video_bitrate.or(base.video_bitrate),
+            fps: self.fps.or(base.fps),
+            ten_bit: self.ten_bit || base.ten_bit,
+            crop: self.crop.or(base.crop),
+            rotate: self.rotate.or(base.rotate),
+            flip: self.flip.or(base.flip),
+            deinterlace: self.deinterlace || base.deinterlace,
+            denoise: self.denoise || base.denoise,
+            grayscale: self.grayscale || base.grayscale,
+            start: self.start.or(base.start),
+            end: self.end.or(base.end),
+            speed: self.speed.or(base.speed),
+            fade_in: self.fade_in.or(base.fade_in),
+            fade_out: self.fade_out.or(base.fade_out),
+            audio_codec: self.audio_codec.or(base.audio_codec),
+            sample_rate: self.sample_rate.or(base.sample_rate),
+            channels: self.channels.or(base.channels),
+            volume_db: self.volume_db.or(base.volume_db),
+            normalize: self.normalize || base.normalize,
+            bit_depth: self.bit_depth.or(base.bit_depth),
+            trim_silence: self.trim_silence || base.trim_silence,
+            strip_metadata: self.strip_metadata || base.strip_metadata,
         }
     }
 }
@@ -416,9 +501,9 @@ mod tests {
 
         assert_eq!("H.264".parse::<VideoCodec>().unwrap(), VideoCodec::H264);
         assert_eq!("hevc".parse::<VideoCodec>().unwrap(), VideoCodec::Hevc);
-        assert!("av1".parse::<VideoCodec>().is_err());
+        assert!("vp8".parse::<VideoCodec>().is_err());
         for codec in VideoCodec::ALL {
-            assert_eq!(codec.id().parse::<VideoCodec>().unwrap(), codec);
+            assert_eq!(codec.id().parse::<VideoCodec>().unwrap(), *codec);
         }
 
         let merged = Options::default().or(&p.options);

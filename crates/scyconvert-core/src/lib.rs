@@ -6,6 +6,7 @@ mod batch;
 mod engine;
 mod error;
 mod formats;
+mod media;
 mod options;
 mod publish;
 mod registry;
@@ -14,5 +15,8 @@ pub use batch::{BatchItem, Event, expand_inputs, run_batch};
 pub use engine::{Cancel, Ctx, Engine, Progress, Step};
 pub use error::{Error, Result, stderr_tail};
 pub use formats::{Category, FORMATS, Format, format_by_extension, format_by_id};
-pub use options::{Background, Options, PageRange, Preset, VideoCodec};
+pub use options::{
+    Aspect, AudioCodec, Background, Channels, EncoderSpeed, Flip, FrameRate, Hardware, Options,
+    PageRange, Preset, Rotation, SAMPLE_RATES, Timestamp, VideoCodec,
+};
 pub use registry::{Job, Output, Plan, Registry};

@@ -1,7 +1,9 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use scyconvert_core::{Background, Ctx, Engine, Error, Options, Result, Step, VideoCodec};
+use scyconvert_core::{Background, Ctx, Engine, Error, Result, Step};
+
+use crate::ffmpeg_args::{ffmpeg_args, output_secs};
 
 const VIDEO_IN: &[&str] = &["mp4", "mov", "webm", "mkv", "avi", "gif"];
 const VIDEO_OUT: &[&str] = &["mp4", "mov", "webm", "mkv", "avi", "gif"];
@@ -145,134 +147,6 @@ impl Default for FfmpegEngine {
     }
 }
 
-/// Maps 1-100 quality onto a CRF scale where `best` is quality 100.
-fn crf(quality: u8, worst: f32) -> String {
-    format!("{:.0}", worst - f32::from(quality) * 0.25)
-}
-
-fn video_scale(height: u32) -> String {
-    // Zero is a special FFmpeg size sentinel, so clamp narrow frames to two.
-    // A one-pixel source or cap cannot satisfy even sizing without enlargement.
-    format!(
-        "scale='if(lt(iw,2),nan,max(2,trunc(iw*min(1,{height}/ih)/2)*2))':'if(lt(min(ih,{height}),2),nan,max(2,trunc(min(ih,{height})/2)*2))'"
-    )
-}
-
-/// Encoder arguments for one output format and the user's options.
-/// Hardware encoders (VideoToolbox, NVENC, QSV, VAAPI, AMF) get picked here
-/// once detection lands.
-fn output_args(to: &str, o: &Options) -> Vec<String> {
-    let q = o.quality;
-    let x264_crf = q.map_or("20".into(), |q| crf(q, 40.0));
-    let vp9_crf = q.map_or("32".into(), |q| crf(q, 52.0));
-    let aac = format!("{}k", o.audio_bitrate.unwrap_or(192));
-    let bitrate = o.audio_bitrate.map(|b| format!("{b}k"));
-    let scale = o.video_height.map(video_scale);
-    let mut args: Vec<String> = Vec::new();
-    let mut push = |a: &[&str]| args.extend(a.iter().map(|s| s.to_string()));
-    match to {
-        "mp4" | "mov" | "mkv" => {
-            match o.video_codec.unwrap_or(VideoCodec::H264) {
-                VideoCodec::H264 => {
-                    push(&["-c:v", "libx264", "-preset", "medium", "-crf", &x264_crf]);
-                }
-                VideoCodec::Hevc => {
-                    let x265_crf = q.map_or("24".into(), |q| crf(q, 44.0));
-                    push(&["-c:v", "libx265", "-preset", "medium", "-crf", &x265_crf]);
-                    // QuickTime and Apple devices only play HEVC tagged hvc1.
-                    if to != "mkv" {
-                        push(&["-tag:v", "hvc1"]);
-                    }
-                }
-            }
-            push(&["-pix_fmt", "yuv420p"]);
-            if !o.strip_audio {
-                push(&["-c:a", "aac", "-b:a", &aac]);
-            }
-            if to != "mkv" {
-                push(&["-movflags", "+faststart"]);
-            }
-        }
-        "webm" => {
-            push(&[
-                "-c:v",
-                "libvpx-vp9",
-                "-crf",
-                &vp9_crf,
-                "-b:v",
-                "0",
-                "-row-mt",
-                "1",
-            ]);
-            // FFmpeg 9 refuses VP9 in RGB (gbrap, from a transparent GIF),
-            // and few players handle it anyway.
-            push(&["-deadline", "good", "-cpu-used", "4", "-pix_fmt", "yuv420p"]);
-            if !o.strip_audio {
-                push(&["-c:a", "libopus"]);
-                if let Some(b) = &bitrate {
-                    push(&["-b:a", b]);
-                }
-            }
-        }
-        "avi" => {
-            let qv = q.map_or(3, |q| 2 + (100 - u32::from(q)) * 29 / 99);
-            push(&["-c:v", "mpeg4", "-q:v", &qv.to_string()]);
-            if !o.strip_audio {
-                push(&["-c:a", "libmp3lame"]);
-                if let Some(b) = &bitrate {
-                    push(&["-b:a", b]);
-                }
-            }
-        }
-        "gif" => {
-            let size = o
-                .video_height
-                .map_or("scale='min(720,iw)':-2".into(), video_scale);
-            let vf = format!(
-                "fps=12,{size}:flags=lanczos,split[a][b];[a]palettegen[p];[b][p]paletteuse"
-            );
-            push(&["-vf", &vf, "-an"]);
-            return args;
-        }
-        // Still frames are always written as PNG, keeping any alpha; convert()
-        // then encodes the target through the image engine.
-        "png" => {
-            push(&["-frames:v", "1", "-update", "1"]);
-            if let Some(m) = o.max_size {
-                let vf = format!(
-                    "scale='min(iw,{m})':'min(ih,{m})':force_original_aspect_ratio=decrease"
-                );
-                push(&["-vf", &vf]);
-            }
-            return args;
-        }
-        "mp3" => match &bitrate {
-            Some(b) => push(&["-vn", "-c:a", "libmp3lame", "-b:a", b]),
-            None => push(&["-vn", "-c:a", "libmp3lame", "-q:a", "2"]),
-        },
-        "wav" => push(&["-vn", "-c:a", "pcm_s16le"]),
-        "flac" => push(&["-vn", "-c:a", "flac"]),
-        "aac" => push(&["-vn", "-c:a", "aac", "-b:a", &aac, "-f", "adts"]),
-        "m4a" => push(&["-vn", "-c:a", "aac", "-b:a", &aac]),
-        "ogg" => match &bitrate {
-            Some(b) => push(&["-vn", "-c:a", "libvorbis", "-b:a", b]),
-            None => push(&["-vn", "-c:a", "libvorbis", "-q:a", "5"]),
-        },
-        "opus" => {
-            let b = bitrate.unwrap_or_else(|| "128k".into());
-            push(&["-vn", "-c:a", "libopus", "-b:a", &b]);
-        }
-        _ => {}
-    }
-    if o.strip_audio && VIDEO_OUT.contains(&to) {
-        args.push("-an".into());
-    }
-    if let Some(vf) = scale.filter(|_| VIDEO_OUT.contains(&to)) {
-        args.extend(["-vf".into(), vf]);
-    }
-    args
-}
-
 impl Engine for FfmpegEngine {
     fn id(&self) -> &'static str {
         "ffmpeg"
@@ -303,12 +177,24 @@ impl Engine for FfmpegEngine {
             engine: "ffmpeg",
             reason: "ffmpeg not found".into(),
         })?;
-        let total = self.duration_us(ctx, input)?.filter(|t| *t > 0.0);
+        let input_secs = self
+            .duration_us(ctx, input)?
+            .filter(|t| *t > 0.0)
+            .map(|us| us / 1_000_000.0);
+        let to = ctx.step.to.id;
+        let args = ffmpeg_args(
+            if to == "jpeg" { "png" } else { to },
+            ctx.options,
+            input_secs,
+        )?;
+        // Progress follows the output's timeline: trimmed, at the new speed.
+        let total = output_secs(ctx.options, input_secs)
+            .filter(|t| *t > 0.0)
+            .map(|secs| secs * 1_000_000.0);
         if total.is_none() {
             ctx.indeterminate();
         }
         let output = ctx.artifact(out_dir, 0);
-        let to = ctx.step.to.id;
         if to == "gif" && matches!(ctx.options.background, Some(Background::Color(_))) {
             return Err(Error::InvalidOption(
                 "a background color isn't supported for video to GIF yet".into(),
@@ -324,9 +210,11 @@ impl Engine for FfmpegEngine {
         let mut cmd = Command::new(ffmpeg);
         cmd.args(["-hide_banner", "-nostdin", "-y", "-v", "error"])
             .args(LOCAL_INPUT_ARGS)
-            .args(["-progress", "pipe:1", "-nostats", "-i"])
+            .args(["-progress", "pipe:1", "-nostats"])
+            .args(&args.input)
+            .arg("-i")
             .arg(local_path(input))
-            .args(output_args(if via_png { "png" } else { to }, ctx.options))
+            .args(&args.output)
             .arg(written);
         crate::run_tool("ffmpeg", cmd, ctx, |line| {
             let us = line
@@ -353,80 +241,24 @@ impl Engine for FfmpegEngine {
 
 #[cfg(test)]
 mod tests {
+    use scyconvert_core::{Options, Timestamp, VideoCodec};
+
     use super::*;
-
-    #[test]
-    fn options_shape_encoder_args() {
-        let o = Options {
-            quality: Some(80),
-            video_height: Some(480),
-            audio_bitrate: Some(96),
-            ..Options::default()
-        };
-        let mp4 = output_args("mp4", &o).join(" ");
-        assert!(mp4.contains("-crf 20") && mp4.contains("-b:a 96k"), "{mp4}");
-        assert!(mp4.ends_with(&format!("-vf {}", video_scale(480))), "{mp4}");
-        let gif = output_args("gif", &o).join(" ");
-        assert!(
-            gif.contains(&format!("{}:flags", video_scale(480))) && !gif.contains("-vf scale"),
-            "{gif}"
-        );
-        let mp3 = output_args("mp3", &o).join(" ");
-        assert!(mp3.contains("-b:a 96k") && !mp3.contains("-q:a"), "{mp3}");
-        assert!(!output_args("png", &o).join(" ").contains("scale"));
-    }
-
-    #[test]
-    fn defaults_are_unchanged() {
-        let o = Options::default();
-        assert_eq!(
-            output_args("mp4", &o).join(" "),
-            "-c:v libx264 -preset medium -crf 20 -pix_fmt yuv420p -c:a aac -b:a 192k -movflags +faststart"
-        );
-        assert_eq!(
-            output_args("mkv", &o).join(" "),
-            "-c:v libx264 -preset medium -crf 20 -pix_fmt yuv420p -c:a aac -b:a 192k"
-        );
-        assert_eq!(
-            output_args("webm", &o).join(" "),
-            "-c:v libvpx-vp9 -crf 32 -b:v 0 -row-mt 1 -deadline good -cpu-used 4 -pix_fmt yuv420p -c:a libopus"
-        );
-        assert_eq!(
-            output_args("avi", &o).join(" "),
-            "-c:v mpeg4 -q:v 3 -c:a libmp3lame"
-        );
-    }
-
-    #[test]
-    fn codec_and_strip_audio_shape_encoder_args() {
-        let hevc = Options {
-            video_codec: Some(VideoCodec::Hevc),
-            ..Options::default()
-        };
-        let mp4 = output_args("mp4", &hevc).join(" ");
-        assert!(
-            mp4.contains("-c:v libx265") && mp4.contains("-tag:v hvc1") && !mp4.contains("libx264"),
-            "{mp4}"
-        );
-        assert!(!output_args("mkv", &hevc).join(" ").contains("hvc1"));
-        // The codec only applies where it can: WebM stays VP9.
-        assert!(output_args("webm", &hevc).join(" ").contains("libvpx-vp9"));
-
-        let silent = Options {
-            strip_audio: true,
-            ..Options::default()
-        };
-        for to in ["mp4", "mov", "mkv", "webm", "avi"] {
-            let args = output_args(to, &silent);
-            assert!(args.contains(&"-an".to_string()), "{to}: {args:?}");
-            assert!(!args.contains(&"-c:a".to_string()), "{to}: {args:?}");
-        }
-        // Audio targets ignore it rather than producing an empty file.
-        assert!(!output_args("mp3", &silent).contains(&"-an".to_string()));
-    }
+    use crate::ffmpeg_args::video_scale;
 
     /// Converts a generated clip with FFmpeg, if it is installed.
     fn convert_clip(to: &str, options: &Options) -> Option<(tempfile::TempDir, PathBuf)> {
+        convert_generated(to, options, "duration=1", "sine=frequency=440:duration=1")
+    }
+
+    /// Converts a clip made from lavfi `testsrc` (with `video` appended) and
+    /// `audio` sources.
+    fn convert_generated(
+        to: &str,
+        options: &Options,
+        video: &str,
+        audio: &str,
+    ) -> Option<(tempfile::TempDir, PathBuf)> {
         let engine = FfmpegEngine::new();
         if let Some(reason) = engine.unavailable_reason() {
             eprintln!("skipping: {reason}");
@@ -442,9 +274,9 @@ mod tests {
                 "-f",
                 "lavfi",
                 "-i",
-                "testsrc=size=128x96:rate=10:duration=1",
+                &format!("testsrc=size=128x96:rate=10:{video}"),
             ])
-            .args(["-f", "lavfi", "-i", "sine=frequency=440:duration=1"])
+            .args(["-f", "lavfi", "-i", audio])
             .args([
                 "-c:v",
                 "libx264",
@@ -468,7 +300,15 @@ mod tests {
         std::fs::create_dir(&out).unwrap();
         let outputs = match engine.convert(&ctx, &input, &out) {
             Ok(outputs) => outputs,
-            Err(e) if e.to_string().contains("Unknown encoder") => {
+            Err(e)
+                if [
+                    "Unknown encoder",
+                    "Error while opening encoder",
+                    "No capable devices",
+                ]
+                .iter()
+                .any(|m| e.to_string().contains(m)) =>
+            {
                 eprintln!("skipping: this FFmpeg lacks an encoder: {e}");
                 return None;
             }
@@ -636,6 +476,161 @@ mod tests {
                 "{streams:?}"
             );
         }
+    }
+
+    /// `key=value` lines for the output's length and its streams' shapes.
+    fn probe(path: &Path) -> Option<Vec<String>> {
+        let ffprobe = FfmpegEngine::new().ffprobe?;
+        let out = Command::new(ffprobe)
+            .args([
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration:stream=codec_name,width,height,r_frame_rate,channels,sample_rate,pix_fmt",
+                "-of",
+                "default=nw=1",
+            ])
+            .arg(path)
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+        Some(
+            String::from_utf8(out.stdout)
+                .unwrap()
+                .lines()
+                .map(str::to_string)
+                .collect(),
+        )
+    }
+
+    fn value<'a>(probe: &'a [String], key: &str) -> &'a str {
+        probe
+            .iter()
+            .find_map(|line| line.strip_prefix(&format!("{key}=")))
+            .unwrap_or_else(|| panic!("no {key} in {probe:?}"))
+    }
+
+    fn duration(probe: &[String]) -> f64 {
+        value(probe, "duration").parse().unwrap()
+    }
+
+    #[test]
+    fn real_ffmpeg_trims_crops_rotates_and_reshapes() {
+        let options = Options {
+            start: Some("1".parse().unwrap()),
+            end: Some("3".parse().unwrap()),
+            speed: Some(200),
+            crop: Some(scyconvert_core::Aspect::Square),
+            rotate: Some(scyconvert_core::Rotation::Right),
+            fps: Some("25".parse().unwrap()),
+            fade_in: Some("0.2".parse().unwrap()),
+            fade_out: Some("0.2".parse().unwrap()),
+            channels: Some(scyconvert_core::Channels::Mono),
+            sample_rate: Some(22050),
+            grayscale: true,
+            denoise: true,
+            deinterlace: true,
+            strip_metadata: true,
+            ..Options::default()
+        };
+        let Some((_dir, output)) = convert_generated(
+            "mp4",
+            &options,
+            "duration=4",
+            "sine=frequency=440:duration=4",
+        ) else {
+            return;
+        };
+        let Some(p) = probe(&output) else { return };
+        // Seconds 1 to 3 at double speed.
+        assert!((duration(&p) - 1.0).abs() < 0.15, "{p:?}");
+        // 128x96 cropped to 96x96, then turned.
+        assert_eq!(
+            (value(&p, "width"), value(&p, "height")),
+            ("96", "96"),
+            "{p:?}"
+        );
+        assert_eq!(value(&p, "r_frame_rate"), "25/1");
+        assert_eq!(value(&p, "channels"), "1");
+        assert_eq!(value(&p, "sample_rate"), "22050");
+    }
+
+    #[test]
+    fn real_ffmpeg_encodes_every_codec() {
+        let cases = [
+            ("mp4", VideoCodec::Av1, "av1"),
+            ("webm", VideoCodec::Vp9, "vp9"),
+            ("mov", VideoCodec::ProRes, "prores"),
+            ("mkv", VideoCodec::Copy, "h264"),
+        ];
+        for (to, codec, name) in cases {
+            let options = Options {
+                video_codec: Some(codec),
+                encoder_speed: Some(scyconvert_core::EncoderSpeed::Fastest),
+                ten_bit: matches!(codec, VideoCodec::Av1),
+                ..Options::default()
+            };
+            let Some((_dir, output)) = convert_clip(to, &options) else {
+                continue;
+            };
+            let Some(p) = probe(&output) else { return };
+            assert_eq!(value(&p, "codec_name"), name, "{to}: {p:?}");
+            if codec == VideoCodec::Av1 {
+                assert_eq!(value(&p, "pix_fmt"), "yuv420p10le", "{p:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn real_ffmpeg_hardware_encoder_when_present() {
+        let options = Options {
+            hardware: Some(scyconvert_core::Hardware::Nvidia),
+            video_codec: Some(VideoCodec::Hevc),
+            ..Options::default()
+        };
+        // Skips on machines without an NVIDIA GPU. NVENC needs frames
+        // larger than the usual test clip.
+        let Some((_dir, output)) = convert_generated(
+            "mp4",
+            &options,
+            "duration=1:size=320x240",
+            "sine=frequency=440:duration=1",
+        ) else {
+            return;
+        };
+        let Some(p) = probe(&output) else { return };
+        assert_eq!(value(&p, "codec_name"), "hevc", "{p:?}");
+    }
+
+    #[test]
+    fn real_ffmpeg_audio_options() {
+        // One second of silence on each side of two seconds of tone.
+        let quiet_edges = "sine=frequency=440:duration=2,adelay=1000|1000,apad=pad_dur=1";
+        let options = Options {
+            trim_silence: true,
+            normalize: true,
+            volume_db: Some(-3),
+            ..Options::default()
+        };
+        let Some((_dir, output)) = convert_generated("mp3", &options, "duration=4", quiet_edges)
+        else {
+            return;
+        };
+        let Some(p) = probe(&output) else { return };
+        assert!((duration(&p) - 2.0).abs() < 0.2, "{p:?}");
+        // loudnorm would resample to 192 kHz without an explicit rate.
+        assert_eq!(value(&p, "sample_rate"), "48000");
+
+        let wav = Options {
+            bit_depth: Some(24),
+            fade_out: Some(Timestamp::from_secs(1)),
+            ..Options::default()
+        };
+        let Some((_dir, output)) = convert_clip("wav", &wav) else {
+            return;
+        };
+        let Some(p) = probe(&output) else { return };
+        assert_eq!(value(&p, "codec_name"), "pcm_s24le");
     }
 }
 

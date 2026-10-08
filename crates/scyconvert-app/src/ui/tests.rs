@@ -11,7 +11,8 @@ use gpui_kit::component::input::InputState;
 use gpui_kit::test::TestWindowExt;
 use gpui_kit::{
     AnyWindowHandle, App, AppContext as _, Bounds, ClipboardEntry, ElementId, Entity, ImageFormat,
-    Render, SharedString, TestAppContext, Window, WindowBounds, WindowOptions, point, px, size,
+    Render, ScrollDelta, SharedString, TestAppContext, Window, WindowBounds, WindowOptions, point,
+    px, size,
 };
 use scyconvert_core::{
     Background, Ctx, Engine, Options, Preset, Registry, VideoCodec, format_by_id,
@@ -339,6 +340,64 @@ fn click(cx: &mut TestAppContext, handle: AnyWindowHandle, name: &str) {
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         window.click(id(name), cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+}
+
+/// Scrolls Quick convert's body until `name` is in view, as a user would.
+fn reveal(cx: &mut TestAppContext, handle: AnyWindowHandle, name: &str) {
+    for _ in 0..40 {
+        // Positive scrolls up, toward an element above the visible part.
+        let step = cx
+            .update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                let target = window.find(id(name));
+                if target.visible() {
+                    return None;
+                }
+                let body = window.find(id("quick-body")).bounds();
+                Some(if target.bounds().top() < body.top() {
+                    80.
+                } else {
+                    -80.
+                })
+            })
+            .unwrap();
+        let Some(step) = step else { return };
+        cx.update_window(handle, |_, window, cx| {
+            window.scroll(
+                id("quick-body"),
+                ScrollDelta::Pixels(point(px(0.), px(step))),
+                cx,
+            )
+        })
+        .unwrap();
+        cx.run_until_parked();
+    }
+}
+
+fn click_below(cx: &mut TestAppContext, handle: AnyWindowHandle, name: &str) {
+    reveal(cx, handle, name);
+    click(cx, handle, name);
+}
+
+/// Types `text` into the field `name`, replacing what it held, as a user would.
+fn type_into(cx: &mut TestAppContext, handle: AnyWindowHandle, name: &str, text: &str) {
+    click_below(cx, handle, name);
+    cx.update_window(handle, |_, window, cx| {
+        window.press(
+            if cfg!(target_os = "macos") {
+                "cmd-a"
+            } else {
+                "ctrl-a"
+            },
+            cx,
+        );
+        window.press("backspace", cx);
+        if !text.is_empty() {
+            window.input(text, cx);
+        }
     })
     .unwrap();
     cx.run_until_parked();
@@ -1475,9 +1534,12 @@ fn quick_convert_offers_codec_and_keep_audio_for_video(cx: &mut TestAppContext) 
     click(cx, window, "keep-audio");
     cx.read(|cx| assert!(!view.read(cx).conversion_options().strip_audio));
 
-    // WebM has no codec choice but can drop audio; GIF has neither.
+    // WebM offers its own codecs, and HEVC isn't one of them; GIF has
+    // neither a codec nor audio.
     click(cx, window, "to-webm");
-    assert!(!shown(cx, window, "codec") && shown(cx, window, "keep-audio"));
+    assert_eq!(label(cx, window, "codec").as_deref(), Some("VP9"));
+    assert!(shown(cx, window, "keep-audio"));
+    cx.read(|cx| assert_eq!(view.read(cx).conversion_options().video_codec, None));
     click(cx, window, "to-gif");
     assert!(!shown(cx, window, "codec") && !shown(cx, window, "keep-audio"));
 
@@ -2296,4 +2358,73 @@ fn a_reinstall_waits_for_document_jobs_and_holds_new_ones(cx: &mut TestAppContex
                 .unwrap();
         })
     });
+}
+
+#[gpui_kit::test]
+fn quick_convert_has_collapsible_video_and_audio_options(cx: &mut TestAppContext) {
+    let f = Fixture::new(cx);
+    let clip = f.dir.path().join("clip.mov");
+    std::fs::write(&clip, "not really a movie").unwrap();
+    let (window, view) = f.quick(cli(vec![clip], None, None), cx);
+    let targets = cx.read(|cx| view.read(cx).targets.formats.clone());
+    if !targets.iter().any(|t| t.id == "mp4") {
+        eprintln!("skipping: no engine converts MOV here (is FFmpeg installed?)");
+        return;
+    }
+    click(cx, window, "to-mp4");
+    // Sections start closed.
+    for section in ["encoding", "picture", "timing", "audio"] {
+        assert!(
+            shown(cx, window, &format!("section-{section}")),
+            "{section}"
+        );
+    }
+    assert!(!shown(cx, window, "crop"));
+
+    click_below(cx, window, "section-picture");
+    click_below(cx, window, "crop");
+    click_below(cx, window, "crop-9:16");
+    click_below(cx, window, "grayscale");
+    click_below(cx, window, "section-encoding");
+    click_below(cx, window, "hardware");
+    click_below(cx, window, "hardware-nvenc");
+    click_below(cx, window, "section-audio");
+    click_below(cx, window, "channels");
+    click_below(cx, window, "channels-mono");
+    click_below(cx, window, "section-timing");
+    type_into(cx, window, "start", "1:05");
+    cx.read(|cx| {
+        let o = view.read(cx).conversion_options();
+        assert_eq!(o.crop, Some(scyconvert_core::Aspect::Tall));
+        assert!(o.grayscale);
+        assert_eq!(o.hardware, Some(scyconvert_core::Hardware::Nvidia));
+        assert_eq!(o.channels, Some(scyconvert_core::Channels::Mono));
+        assert_eq!(o.start, Some("65".parse().unwrap()));
+    });
+    assert_eq!(
+        label(cx, window, "crop").as_deref(),
+        Some("9:16 (vertical)")
+    );
+
+    // A bad time says what's wrong and blocks Convert.
+    type_into(cx, window, "start", "soon");
+    click_below(cx, window, "convert");
+    assert!(label(cx, window, "error").is_some_and(|e| e.contains("time")));
+    type_into(cx, window, "start", "");
+
+    // Leaving out the audio hides its section and its options.
+    click_below(cx, window, "keep-audio");
+    assert!(!shown(cx, window, "section-audio"));
+    cx.read(|cx| assert_eq!(view.read(cx).conversion_options().channels, None));
+
+    // Audio targets keep only what applies to audio.
+    if targets.iter().any(|t| t.id == "flac") {
+        click_below(cx, window, "to-flac");
+        assert!(!shown(cx, window, "section-picture"));
+        cx.read(|cx| {
+            let o = view.read(cx).conversion_options();
+            assert_eq!((o.crop, o.grayscale, o.hardware), (None, false, None));
+            assert_eq!(o.channels, Some(scyconvert_core::Channels::Mono));
+        });
+    }
 }
