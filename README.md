@@ -118,4 +118,4 @@ Pushing a `v*` tag makes GitHub Actions build every download and publish a relea
 
 ## Credits and license
 
-scyconvert is a modified version of [convt](https://github.com/opencoredev/convt) by opencoredev. The website, accounts, licensing, update checks and cloud service are gone, and it has its own installers. Licensed under the [GNU AGPL v3](LICENSE). The bundled FFmpeg is GPL and PDFium is BSD-3-Clause; their licenses ship in the `licenses` folder of every install.
+icensed under the [GNU AGPL v3](LICENSE). The bundled FFmpeg is GPL and PDFium is BSD-3-Clause; their licenses ship in the `licenses` folder of every install.
