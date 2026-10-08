@@ -5,30 +5,27 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
 	<key>CFBundleDisplayName</key>
-	<string>convt</string>
+	<string>scyconvert</string>
 	<key>CFBundleExecutable</key>
-	<string>convt-app</string>
+	<string>scyconvert-app</string>
 	<key>CFBundleIconFile</key>
-	<string>convt</string>
+	<string>scyconvert</string>
 	<key>CFBundleIdentifier</key>
-	<string>app.convt.desktop</string>
+	<string>io.github.furkangercek.scyconvert</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>convt</string>
+	<string>scyconvert</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
 	<string>@VERSION@</string>
 	<key>CFBundleVersion</key>
-	<string>@BUILD@</string>
+	<string>@VERSION@</string>
 	<key>CFBundleSupportedPlatforms</key>
 	<array>
 		<string>MacOSX</string>
 	</array>
-	<!-- The Finder extension reads the app's target list from this group. -->
-	<key>ConvtAppGroup</key>
-	<string>@APP_GROUP@</string>
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.utilities</string>
 	<key>LSMinimumSystemVersion</key>
@@ -41,10 +38,10 @@
 	<array>
 		<dict>
 			<key>CFBundleURLName</key>
-			<string>app.convt.desktop</string>
+			<string>io.github.furkangercek.scyconvert</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
-				<string>convt</string>
+				<string>scyconvert</string>
 			</array>
 		</dict>
 	</array>
@@ -69,19 +66,19 @@
 			</array>
 		</dict>
 	</array>
-	<!-- The Services menu fallback for when the Finder extension is off. -->
+	<!-- "Convert with scyconvert" in the Services menu. -->
 	<key>NSServices</key>
 	<array>
 		<dict>
 			<key>NSMenuItem</key>
 			<dict>
 				<key>default</key>
-				<string>Convert with convt</string>
+				<string>Convert with scyconvert</string>
 			</dict>
 			<key>NSMessage</key>
 			<string>openFiles</string>
 			<key>NSPortName</key>
-			<string>convt</string>
+			<string>scyconvert</string>
 			<key>NSRequiredContext</key>
 			<dict/>
 			<key>NSSendFileTypes</key>
