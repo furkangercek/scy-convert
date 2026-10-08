@@ -1,6 +1,6 @@
 //! The app icon on Windows windows. GPUI registers only the large icon on its
-//! window class, so Windows shrinks the 32 px "Scy" into the title bar
-//! instead of using the 16 px glyph made for that size.
+//! window class, so Windows shrinks the 32 px icon into the title bar
+//! instead of using the .ico's own 16 px size.
 
 use gpui_kit::Window;
 

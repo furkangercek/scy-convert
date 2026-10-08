@@ -338,10 +338,15 @@ impl IExplorerCommand_Impl for ExplorerCommand_Impl {
         if !matches!(self.kind, Kind::Root(_)) {
             return Err(Error::from_hresult(E_NOTIMPL));
         }
-        text(&format!(
-            "{},0",
-            install_dir()?.join("scyconvert-app.exe").display()
-        ))
+        // A plain .ico beside the DLL, as PowerToys does: the Windows 11 menu
+        // showed no icon for "app.exe,0" on the packaged verbs.
+        let dir = install_dir()?;
+        let ico = dir.join("scyconvert.ico");
+        if ico.is_file() {
+            text(&ico.display().to_string())
+        } else {
+            text(&format!("{},0", dir.join("scyconvert-app.exe").display()))
+        }
     }
     fn GetToolTip(&self, _: Ref<IShellItemArray>) -> Result<PWSTR> {
         if !matches!(self.kind, Kind::Root(_)) {

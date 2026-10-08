@@ -6,9 +6,11 @@ Needs Pillow and a built CLI (cargo build --release -p scyconvert-cli), which
 renders the SVGs. Writes icon.ico (Windows), icon.icns (macOS) and the
 Finder menu template images; commit them with the masters.
 
-- icon-win.svg / icon-small-win.svg: edge to edge, as Windows draws icons
+- icon-win.svg: edge to edge, as Windows draws icons
 - icon.svg / icon-small.svg: on Apple's 824 px tile with padding
-- the -small masters (arrows only) are used at 16 px, where "Scy" is unreadable
+- icon-small.svg (arrows only) is used at 16 px on macOS, where "Scy" is
+  unreadable. Windows uses the full icon at every size, so the title bar,
+  tray and Explorer menu match the taskbar.
 - menu.svg: a black glyph that macOS tints for light and dark menus
 """
 
@@ -46,12 +48,12 @@ def sized(full: Image.Image, small: Image.Image, size: int) -> Image.Image:
 def main() -> None:
     with tempfile.TemporaryDirectory() as t:
         tmp = Path(t)
-        win, win_small = render("icon-win.svg", tmp), render("icon-small-win.svg", tmp)
+        win = render("icon-win.svg", tmp)
         mac, mac_small = render("icon.svg", tmp), render("icon-small.svg", tmp)
         menu = render("menu.svg", tmp)
 
     ico_sizes = [256, 128, 64, 48, 32, 24, 16]
-    ico = [sized(win, win_small, s) for s in ico_sizes]
+    ico = [sized(win, win, s) for s in ico_sizes]
     ico[0].save(HERE / "icon.ico", sizes=[(s, s) for s in ico_sizes], append_images=ico[1:])
 
     icns_sizes = [1024, 512, 256, 128, 64, 32, 16]
