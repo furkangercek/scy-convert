@@ -310,12 +310,11 @@ impl IExplorerCommand_Impl for ExplorerCommand_Impl {
         }
         Ok(id)
     }
-    fn GetState(&self, items: Ref<IShellItemArray>, slow: BOOL) -> Result<u32> {
+    // Answers even when `slow` is false: the classic menu reads E_PENDING as
+    // hidden, and the probe is ~50 ms once per extension (then cached).
+    fn GetState(&self, items: Ref<IShellItemArray>, _slow: BOOL) -> Result<u32> {
         if self.target.is_some() {
             return Ok(ECS_ENABLED.0 as u32);
-        }
-        if !slow.as_bool() {
-            return Err(Error::from_hresult(HRESULT(0x8000000Au32 as i32)));
         }
         let Ok(paths) = files(items) else {
             return Ok(ECS_HIDDEN.0 as u32);

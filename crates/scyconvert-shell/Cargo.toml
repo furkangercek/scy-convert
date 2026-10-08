@@ -20,3 +20,7 @@ windows = { version = "0.62.2", features = [
 windows-core = "0.62.2"
 serde.workspace = true
 serde_json.workspace = true
+
+# The context-menu example builds a real popup menu.
+[target.'cfg(windows)'.dev-dependencies]
+windows = { version = "0.62.2", features = ["Win32_Graphics_Gdi", "Win32_UI_WindowsAndMessaging"] }
