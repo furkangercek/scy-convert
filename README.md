@@ -1,109 +1,53 @@
-<p align="center">
-  <a href="https://github.com/opencoredev/convt/stargazers"><img alt="GitHub stars" src="https://shieldcn.dev/github/opencoredev/convt/stars.svg?variant=branded&mode=dark" /></a>
-  <a href="https://x.com/leodev"><img alt="Follow @leodev on X" src="https://shieldcn.dev/x/follow/leodev.svg?variant=branded&mode=dark" /></a>
-</p>
+# scyconvert
 
-# convt
+Local file conversion for Windows and macOS. Drop files on the app or use the CLI, pick a format, and the result lands next to the original. Nothing is uploaded and the app makes no network calls on its own.
 
-Local file conversion for your own machine. Right-click a file, pick a format, and convt writes the result next to the original. Images, video, audio, PDFs and documents stay on disk: nothing is uploaded.
-
-- 40 formats, routed through native engines (FFmpeg, PDFium, LibreOffice, image, resvg)
-- A desktop app built with [GPUI](https://www.gpui.rs), with a Finder menu on macOS and file manager menus on Linux. The Windows Explorer menu is built (`crates/convt-shell`) but not yet in the release installer
-- The `convt` CLI, shipped in the same install
-- Multi-hop routes of at most three steps when no engine can convert directly
-- Optional document pack for Word, Excel and PowerPoint, installed only when you ask
-- A paid cloud API and TypeScript SDK for converting files on convt's servers
-- Accounts, checkout and downloads on [convt.app](https://convt.app)
+- Around 40 formats through native engines: FFmpeg, PDFium, LibreOffice, image and resvg
+- A desktop app built with [GPUI](https://www.gpui.rs) and the `scyconvert` CLI in the same install
+- Multi-step routes of up to three hops when no engine converts directly
 
 ## Install
 
-macOS (Apple silicon) with Homebrew:
+Download the latest build from [Releases](https://github.com/furkangercek/scy-convert/releases):
 
-```bash
-brew tap opencoredev/convt https://github.com/opencoredev/convt
-brew install --cask convt
-```
+- **Windows**: `scyconvert-<version>-windows-x64-setup.exe` installs for the current user (no admin rights) and can add the CLI to `PATH`. The `.zip` is the same files, portable.
+- **macOS**: `scyconvert-<version>-macos-arm64.dmg` (Apple silicon) or `-x86_64.dmg` (Intel). The app is not notarized, so the first launch needs right-click > **Open**, or `xattr -dr com.apple.quarantine /Applications/scyconvert.app`.
 
-That installs the signed app and puts the `convt` CLI on your `PATH`. Download the app from [convt.app/download](https://convt.app/download) for a disk image, Windows MSI, or Linux packages. There is no Linux Homebrew formula yet; use the `.deb`, `.rpm` or AppImage. Packaged builds start a 7-day trial on the first conversion.
-
-To build from source:
-
-```bash
-bun run setup
-cargo run -p convt-cli -- photo.png --to webp
-```
-
-`bun run setup` installs system packages (asks for sudo on Linux and macOS), the Rust toolchain, Bun dependencies and PDFium. On Windows run `scripts/setup-windows.ps1` in PowerShell. Ordinary source builds are unrestricted.
+FFmpeg and PDFium are bundled. Word, Excel and PowerPoint files need [LibreOffice](https://www.libreoffice.org/download/) installed; scyconvert finds it in Program Files or `/Applications`.
 
 ## Usage
 
 ```bash
-convt clip.mov --to mp4
-convt photos/ --to webp -r
-convt lease.pdf --to png --pages 1-3
+scyconvert clip.mov --to mp4
+scyconvert photos/ --to webp -r
+scyconvert lease.pdf --to png --pages 1-3
+scyconvert engines              # backends available on this machine
+scyconvert targets photo.png    # formats a file can reach
+scyconvert formats
 ```
 
-From a checkout, prefix those with `cargo run -p convt-cli --`. Output lands next to each input unless you pass `--out-dir`.
+`scyconvert --help` lists the quality, size, page, DPI, video and job options. Output goes next to each input unless you pass `--out-dir`.
 
-## Engines
+## Build from source
 
-convt registers whatever can run on this machine and picks a route:
+Windows (PowerShell):
 
-- **FFmpeg** for video and audio (MP4, MOV, WebM, MKV, AVI, MP3, WAV, FLAC, AAC, M4A, OGG, Opus)
-- **LibreOffice** for Word, Excel, PowerPoint and their open formats, and for saving any of them as PDF
-- **PDFium** to render PDF pages to PNG or JPEG
-- **image** and **resvg** for photos and SVG (JPEG, PNG, WebP, AVIF, GIF, TIFF, BMP, ICO, TGA, PPM, QOI, OpenEXR)
-- **libheif**, or `sips` on macOS, for HEIC
+```powershell
+.\scripts\setup-windows.ps1        # VS Build Tools, Rust, FFmpeg, LibreOffice, PDFium
+cargo run -p scyconvert-app
+.\packaging\windows\package.ps1    # installer and zip in packaging\out (needs Inno Setup)
+```
 
-Office files need LibreOffice on `PATH`. Released Windows builds can also run `convt pack install documents`, which downloads the pinned pack from the GitHub release and verifies its checksum. Ordinary source builds need a system LibreOffice, or an explicit `--source` and `--sha256`. The engines never start that download themselves.
-
-## CLI
+macOS (needs Xcode and Homebrew):
 
 ```bash
-convt engines              # backends available here
-convt targets photo.heic   # formats this file can reach
-convt targets photo.heic --menu
-convt formats
-convt presets
-convt pack status documents
+bash scripts/setup.sh
+cargo run -p scyconvert-app
+bash packaging/macos/package.sh    # dmg in packaging/out
 ```
 
-`convt --help` lists quality, size, pages, DPI, video and job flags. See [AGENTS.md](AGENTS.md) for the rest of the commands in this repo.
-
-## Cloud API
-
-The cloud API converts files on convt's servers for a paid plan. You upload a file, start a job, and download the result. [`@convt/sdk`](packages/sdk) wraps those calls in TypeScript but is not on npm yet; see the [API docs](https://convt.app/docs) for keys, the host to call and the full reference. The API is `crates/convt-server`, and conversions run in sandboxed `crates/convt-worker` processes using the same engines as the app.
-
-## Documentation
-
-- **[convt.app](https://convt.app)**: product site, pricing and sign-in
-- **[Download](https://convt.app/download)**: desktop builds and matching source archives
-- **[Formats](https://convt.app/formats)**: every format and the targets it can reach
-- **[API docs](https://convt.app/docs)**: the cloud API, the SDK and the API reference
-- **[AGENTS.md](AGENTS.md)**: repo layout, conventions, and how to check, test and build
+Pushing a `v*` tag runs `.github/workflows/release.yml`, which builds both platforms and publishes a release.
 
 ## License
 
-convt is open source under the [GNU AGPL v3](LICENSE). The signed desktop builds, convt Cloud and the API are paid. "convt" and the convt logo are trademarks and are not covered by the code license.
-
-## Sponsors
-
-Want your logo here? **[Become a sponsor →](https://github.com/sponsors/opencoredev)**
-
-<p align="center">
-  <a href="https://github.com/sponsors/opencoredev">
-    <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/sponsors/opencoredev.svg?special=resend,instatushq,primitivedotdev,lettermint&title=false&mode=dark&preset=surface" />
-      <source media="(prefers-color-scheme: light)" srcset="https://shieldcn.dev/sponsors/opencoredev.svg?special=resend,instatushq,primitivedotdev,lettermint&title=false&mode=light&preset=surface" />
-      <img alt="Sponsors" src="https://shieldcn.dev/sponsors/opencoredev.svg?special=resend,instatushq,primitivedotdev,lettermint&title=false&mode=dark&preset=surface" width="820" />
-    </picture>
-  </a>
-</p>
-
-## Star History
-
-<p align="center">
-  <a href="https://github.com/opencoredev/convt/stargazers"><img alt="Star history" src="https://shieldcn.dev/chart/github/stars/opencoredev/convt.svg?mode=dark" /></a>
-</p>
-
-<p align="center"><sub><a href="./LICENSE">AGPL-3.0</a> · Built by <a href="https://x.com/leodev">@leodev</a></sub></p>
+AGPL-3.0-only, see [LICENSE](LICENSE). scyconvert is based on [convt](https://github.com/opencoredev/convt) by opencoredev. Bundled FFmpeg is GPL and PDFium is BSD-3-Clause; their licenses ship in the install's `licenses` folder.

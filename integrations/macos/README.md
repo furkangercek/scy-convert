@@ -2,7 +2,7 @@
 
 A Finder Sync extension that adds **Convert with scyconvert** to Finder's right-click menu.
 
-None of this builds or runs on Linux. It needs Xcode and a Mac.
+**Status: not shipped.** `packaging/macos/package.sh` does not bundle the extension. It only works with a Developer ID signature that grants the App Group; an ad-hoc build can't. The Services menu entry below works without it.
 
 ## The menu
 
@@ -10,29 +10,8 @@ None of this builds or runs on Linux. It needs Xcode and a Mac.
 - Picking a format converts in place with no window; **More options…** opens Quick convert. AppKit drops `NSWorkspace.OpenConfiguration.arguments` for sandboxed callers, so the extension can't pass `open --to <format> -- <files>`. Instead it writes the request (`{version, to, files, created}`) to `requests/<uuid>.json` in the App Group container and opens `scyconvert://finder` with this bundle's app by path (another app may claim the `scyconvert` scheme). The app takes every fresh request (under two minutes old, absolute paths, deleted before use) on that link, or at launch in place of the main window. The link only wakes the app: a web page can open it, but only processes in the App Group can write requests, so links still never convert without a click.
 - When it can't write the request (no shared container, as in an ad-hoc build), the extension opens the files with scyconvert instead, which shows Quick convert. Finder's "Open With" → scyconvert arrives the same way.
 - The Services menu has **Convert with scyconvert** as a fallback when the extension is off (`NSServices` in `packaging/macos/Info.plist`, handled in `macos.rs`). It opens Quick convert.
-- The extension is sandboxed and ships inside `scyconvert.app/Contents/PlugIns/`. The GPUI app registers the `scyconvert://` scheme for license and sign-in links.
+- The extension is sandboxed and ships inside `scyconvert.app/Contents/PlugIns/`. The GPUI app registers the `scyconvert://` scheme for these requests.
 
 ## Building
 
-`packaging/macos/bundle.sh` compiles the extension with `swiftc` (no Xcode project) and assembles the whole app; see `packaging/macos/README.md`. The extension doesn't link the Rust core, so it needs no uniffi bindings or XCFramework. `crates/scyconvert-ffi` stays for other integrations.
-
-The first-run window's Finder step, Activity and Settings all read `pluginkit -m -i io.github.furkangercek.scyconvert.FinderSync`. The app polls every second on macOS so those surfaces update when the user comes back from System Settings. Once the extension is on, the first-run step reads "The Finder menu is on" and Continue moves on. Skipping or closing first run still leaves a recover card on Activity (and a status row in Settings) until the extension is on. The Finder step's System Settings picture is a preview, not a switch: the real control is Open System Settings, then scroll to Extensions.
-
-## Finder progress while converting (not built)
-
-The design shows the new file appearing next to the original as soon as the conversion starts, with Finder's progress bar under its icon. Finder draws that bar for any file whose progress a process publishes with `NSProgress`. The plan, all in `crates/scyconvert-app` behind `cfg(target_os = "macos")` using the `objc2-foundation` bindings:
-
-1. Know the output path before the job runs. Today `scyconvert-core` picks the final name when it publishes the result (`publish.rs` adds `-1`, `-2` on a collision), so the app can't know it in advance. Add a function to `scyconvert-core` that resolves and reserves the output path up front, by creating an empty placeholder file there. That is a core change, which is why it isn't done yet.
-2. When the job starts, create `NSProgress(totalUnitCount: 100)`, set `kind = .file`, `fileOperationKind = .copying` and `fileURL` to the placeholder's URL, then call `publish()`.
-3. On every progress update from the runner, set `completedUnitCount`. Jobs without progress (`Status::Running(None)`) leave it indeterminate (`totalUnitCount = -1`).
-4. When the job finishes, call `unpublish()`. The engine writes the real file over the placeholder in one rename. On failure or cancel, unpublish and delete the placeholder.
-
-The extension needs no change for this: Finder picks up published progress from any process.
-
-The menu bar icon's passive spinner (no percentage, no highlight) needs an `NSStatusItem`, which GPUI doesn't offer yet; `crates/scyconvert-app/src/tray.rs` decides what the icon shows and is the place to wire it.
-
-## Still to do
-
-- The App Group only works for a team-signed app: macOS refuses to create the container for an ad-hoc build (`could not publish Finder targets: Operation not permitted`), and the menu then shows only "Open in scyconvert…". Sign with Apple Development or Developer ID.
-- The extension's own hand-off is untested until the extension is enabled in Finder and the app is team-signed.
-- Users enable the extension once in System Settings → General → Login Items & Extensions → Finder.
+The old release tooling compiled `FinderSync/FinderSync.swift` with `swiftc -application-extension -framework FinderSync`, filled `FinderSync/Info.plist`, placed it in `scyconvert.app/Contents/PlugIns/FinderSync.appex` and signed it inside out with matching App Group entitlements. Adding that to `package.sh` needs a signing identity and team ID.
