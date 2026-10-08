@@ -17,8 +17,8 @@ pub struct OfficeEngine {
 impl OfficeEngine {
     pub fn new() -> Self {
         let pack = crate::packs::installed_documents();
-        // Without the pack, a LibreOffice.app the user installed.
-        #[cfg(target_os = "macos")]
+        // Without the pack, a LibreOffice the user installed.
+        #[cfg(any(target_os = "macos", windows))]
         let pack = pack
             .filter(|p| p.is_file())
             .or_else(crate::paths::libreoffice_app);

@@ -81,3 +81,14 @@ pub(crate) fn libreoffice_app() -> Option<PathBuf> {
     .map(|d| d.join(app))
     .find(|p| p.is_file())
 }
+
+/// LibreOffice from its Windows installer, which adds nothing to `PATH`.
+/// `soffice.com` waits for the conversion to finish; `soffice.exe` may not.
+#[cfg(windows)]
+pub(crate) fn libreoffice_app() -> Option<PathBuf> {
+    ["ProgramFiles", "ProgramW6432", "ProgramFiles(x86)"]
+        .into_iter()
+        .filter_map(std::env::var_os)
+        .map(|d| PathBuf::from(d).join(r"LibreOffice\program\soffice.com"))
+        .find(|p| p.is_file())
+}
