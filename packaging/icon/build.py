@@ -8,7 +8,7 @@ Finder menu template images; commit them with the masters.
 
 - icon-win.svg / icon-small-win.svg: edge to edge, as Windows draws icons
 - icon.svg / icon-small.svg: on Apple's 824 px tile with padding
-- the -small masters (arrows only) are used at 32 px and below
+- the -small masters (arrows only) are used at 16 px, where "Scy" is unreadable
 - menu.svg: a black glyph that macOS tints for light and dark menus
 """
 
@@ -22,7 +22,7 @@ from PIL import Image
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
-SMALL = 32
+SMALL = 16
 
 
 def cli() -> Path:
