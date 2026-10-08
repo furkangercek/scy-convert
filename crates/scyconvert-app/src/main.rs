@@ -13,6 +13,7 @@ mod finder;
 mod history;
 mod instance;
 mod jobs;
+mod login;
 #[cfg(target_os = "macos")]
 mod macos;
 mod model;

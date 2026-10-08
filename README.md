@@ -29,6 +29,7 @@ Because "convert MOV to MP4" should not involve a sketchy website, a 200 MB uplo
 - **Around 40 formats** of images, video, audio, PDFs and office documents.
 - **Smart routing.** No direct path between two formats? It chains up to three conversions and figures it out.
 - **Comes with a CLI** for when you want to convert 900 photos at once.
+- **Starts with your computer** if you want it to, minimized and out of the way.
 
 ## Install
 
@@ -45,7 +46,7 @@ Head to **[Releases](https://github.com/furkangercek/scy-convert/releases/latest
 
 1. Run the `setup.exe`. It installs just for you, so there's no admin prompt.
 2. Windows SmartScreen may say it "protected your PC", because the installer isn't code-signed. Click **More info**, then **Run anyway**.
-3. Leave **Add "Convert with scyconvert" to the Explorer right-click menu** checked. Tick **Add the scyconvert command to PATH** if you want the CLI.
+3. Leave **Add "Convert with scyconvert" to the Explorer right-click menu** checked. **Start scyconvert minimized when I sign in** keeps it ready in the taskbar (change it later under Settings > Open at login). Tick **Add the scyconvert command to PATH** if you want the CLI.
 4. Right-click any file and choose **Convert with scyconvert**. On Windows 11 it's under **Show more options**.
 
 Using the `.zip` instead? Unzip it anywhere and run `scyconvert-app.exe`. You get everything except the right-click menu.

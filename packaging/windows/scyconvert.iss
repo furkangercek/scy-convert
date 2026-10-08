@@ -34,6 +34,7 @@ SetupIconFile={#Payload}\scyconvert.ico
 Name: "desktopicon"; Description: "Create a desktop shortcut"; Flags: unchecked
 Name: "addtopath"; Description: "Add the scyconvert command to PATH"
 Name: "explorermenu"; Description: "Add ""Convert with scyconvert"" to the Explorer right-click menu"
+Name: "startup"; Description: "Start scyconvert minimized when I sign in"
 
 [Files]
 Source: "{#Payload}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs
@@ -56,6 +57,10 @@ Root: HKCU; Subkey: "Software\Classes\*\shell\scyconvert"; ValueType: string; \
   ValueName: "MUIVerb"; ValueData: "Convert with scyconvert"; Tasks: explorermenu
 Root: HKCU; Subkey: "Software\Classes\*\shell\scyconvert"; ValueType: string; \
   ValueName: "ExplorerCommandHandler"; ValueData: "{#ShellClsid}"; Tasks: explorermenu
+; Same value as "Open at login" in Settings (crates/scyconvert-app/src/login.rs).
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; \
+  ValueName: "scyconvert"; ValueData: """{app}\scyconvert-app.exe"" --minimized"; \
+  Flags: uninsdeletevalue; Tasks: startup
 Root: HKCU; Subkey: "Environment"; ValueType: expandsz; ValueName: "Path"; \
   ValueData: "{olddata};{app}"; Tasks: addtopath; Check: NeedsAddPath(ExpandConstant('{app}'))
 

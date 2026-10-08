@@ -26,6 +26,9 @@ pub struct Request {
     pub to: Option<String>,
     pub preset: Option<String>,
     pub source: Option<Source>,
+    /// Started at sign-in: open the main window minimized.
+    #[serde(default)]
+    pub minimized: bool,
 }
 
 impl Request {
@@ -42,6 +45,7 @@ impl Request {
 
 pub const USAGE: &str = "\
 usage: scyconvert-app [files...]
+       scyconvert-app --minimized
        scyconvert-app open [--to <format>] [--preset <name>] [--] <files...>
        scyconvert-app 'scyconvert://convert?file=<path>&to=<format>&preset=<name>'
 
@@ -93,6 +97,7 @@ pub fn parse_args(args: Vec<OsString>, cwd: &Path) -> Result<Command, String> {
             Some("--") => only_files = true,
             #[cfg(windows)]
             Some("--show-progress") => req.show_progress = true,
+            Some(crate::login::ARG) => req.minimized = true,
             Some("--to") => req.to = Some(value("--to")?),
             Some("--preset") => req.preset = Some(value("--preset")?),
             Some(f) if f.starts_with("--to=") => req.to = Some(f[5..].into()),
@@ -285,6 +290,13 @@ mod tests {
         assert!(run(&["file://server/share/x.png"]).is_err());
         let help = parse_args(vec!["--help".into()], Path::new("/"));
         assert_eq!(help, Ok(Command::Help));
+    }
+
+    #[test]
+    fn login_entry_opens_minimized_without_files() {
+        let r = run(&["--minimized"]).unwrap();
+        assert!(r.minimized && r.files.is_empty() && !r.auto_start());
+        assert!(!run(&[]).unwrap().minimized);
     }
 
     /// What makes `/tmp` absolute here: Windows paths need a drive.

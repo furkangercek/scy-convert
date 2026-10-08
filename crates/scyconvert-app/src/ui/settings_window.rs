@@ -46,6 +46,9 @@ pub struct SettingsView {
     pub(super) editing: Option<String>,
     /// Remove was clicked once under Documents; the row asks again.
     pub(super) confirm_remove_pack: bool,
+    /// Whether the app starts at sign-in, as the system last reported it.
+    login: Option<bool>,
+    login_error: Option<String>,
     _observe: Subscription,
     _appearance: Subscription,
 }
@@ -70,6 +73,8 @@ impl SettingsView {
             app,
             tab: SettingsTab::General,
             open: None,
+            login: crate::login::enabled(),
+            login_error: None,
             outputs,
             preset_name: input("Name, e.g. web", window, cx),
             preset_quality: input("Quality 1-100", window, cx),
@@ -229,6 +234,30 @@ impl SettingsView {
             move |_, _, cx| app.update(cx, |s, cx| s.update_settings(|s| s.menu_bar_icon = !on, cx))
         });
 
+        let login = self.login.map(|on| {
+            let weak = cx.entity().downgrade();
+            let switch = theme::switch("open-at-login", on, false, p).on_click(move |_, _, cx| {
+                let _ = weak.update(cx, |this, cx| {
+                    this.login_error = crate::login::set(!on)
+                        .err()
+                        .map(|e| format!("Could not change the login item: {e}"));
+                    this.login = crate::login::enabled();
+                    cx.notify();
+                });
+            });
+            field(
+                "Open at login",
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(14.))
+                    .child(switch)
+                    .child(text(12., 16., p.tertiary).child("Starts minimized")),
+                p,
+            )
+        });
+        let login_error = self.login_error.clone();
+
         let documents = {
             let weak = cx.entity().downgrade();
             super::pack::settings_row(
@@ -319,6 +348,8 @@ impl SettingsView {
                     .border_t_1()
                     .border_color(p.hairline)
                     .children(finder)
+                    .children(login)
+                    .children(login_error.map(|e| text(12., 16., p.error).child(e)))
                     .child(field("Menu bar icon", menu_bar, p))
                     .child(field(
                         "Jobs at once",

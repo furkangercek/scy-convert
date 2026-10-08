@@ -80,7 +80,9 @@ fn show<V: Render>(
 /// - Other files open Quick convert, and no files open the main window.
 pub fn route(request: Request, cx: &mut App) {
     let app = model::shared(cx);
-    if request.files.is_empty() {
+    if request.files.is_empty() && request.minimized {
+        open_main_minimized(cx);
+    } else if request.files.is_empty() {
         show_main(cx);
     } else if request.auto_start() {
         // Silent conversions never download: a document that needs the pack
@@ -116,6 +118,16 @@ fn open_main(cx: &mut App) -> Option<(AnyWindowHandle, Entity<MainView>)> {
         });
     }
     opened
+}
+
+/// Opens the main window minimized, as the login entry asks. A window that
+/// is already open is left as it is.
+fn open_main_minimized(cx: &mut App) {
+    if cx.windows().is_empty()
+        && let Some((handle, _)) = open_main(cx)
+    {
+        let _ = handle.update(cx, |_, window, _| window.minimize_window());
+    }
 }
 
 /// Opens Settings on `tab`.
