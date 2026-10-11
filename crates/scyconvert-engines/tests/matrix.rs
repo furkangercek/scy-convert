@@ -126,6 +126,7 @@ const REQUIRED_ROUTES: &[(&str, &str, &str)] = &[
     ("gif", "mp4", "ffmpeg"),
     ("pdf", "png", "pdfium"),
     ("pdf", "jpeg", "pdfium"),
+    ("pdf", "txt", "pdfium"),
     ("odt", "docx", "libreoffice"),
     ("html", "docx", "libreoffice"),
     ("html", "doc", "libreoffice"),

@@ -103,7 +103,7 @@ impl Engine for PdfiumEngine {
     }
 
     fn steps(&self) -> Vec<Step> {
-        crate::steps(&["pdf"], &["png", "jpeg"]).collect()
+        crate::steps(&["pdf"], &["png", "jpeg", "txt"]).collect()
     }
 
     fn convert(&self, ctx: &Ctx, input: &Path, out_dir: &Path) -> Result<Vec<PathBuf>> {
@@ -121,6 +121,9 @@ impl Engine for PdfiumEngine {
             return Err(Error::InvalidOption(format!(
                 "the document has {count} {unit}, so pages {asked} select nothing"
             )));
+        }
+        if ctx.step.to.id == "txt" {
+            return extract_text(ctx, pages, &wanted, out_dir);
         }
         let mut config = match ctx.options.dpi {
             Some(dpi) => PdfRenderConfig::new().scale_page_by_factor(dpi as f32 / 72.0),
@@ -167,6 +170,36 @@ impl Engine for PdfiumEngine {
         }
         Ok(files)
     }
+}
+
+/// Writes the text of every wanted page to one file, pages separated by a
+/// form feed. The UTF-8 BOM lets LibreOffice read it as UTF-8 when the text
+/// goes on to become a DOCX.
+fn extract_text(
+    ctx: &Ctx,
+    pages: &PdfPages,
+    wanted: &[u32],
+    out_dir: &Path,
+) -> Result<Vec<PathBuf>> {
+    let mut text = String::from('\u{feff}');
+    for (n, &i) in wanted.iter().enumerate() {
+        ctx.check()?;
+        let page = pages.get(i as _).map_err(failed)?;
+        if n > 0 {
+            text.push_str("\n\u{c}\n");
+        }
+        text.push_str(page.text().map_err(failed)?.all().trim_end());
+        ctx.progress((n + 1) as f32 / wanted.len() as f32);
+    }
+    if text.trim_start_matches('\u{feff}').trim().is_empty() {
+        return Err(Error::EngineFailed {
+            engine: "pdfium",
+            message: "the PDF has no text layer; it is probably scanned images".into(),
+        });
+    }
+    let target = ctx.artifact(out_dir, 0);
+    std::fs::write(&target, text.replace("\r\n", "\n"))?;
+    Ok(vec![target])
 }
 
 #[cfg(test)]
