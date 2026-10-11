@@ -167,10 +167,15 @@ impl Registry {
     }
 
     /// The targets a right-click menu offers for `from`, in groups by kind,
-    /// most wanted first in each. A video's still frames are only the common
-    /// image formats; the rest stay in Quick convert.
+    /// most wanted first in each. Images and documents offer only the common
+    /// formats; the rest stay in Quick convert.
     pub fn menu_groups(&self, from: &'static Format) -> Vec<(Category, Vec<&'static Format>)> {
         let moving = matches!(from.category, Category::Video) || from.id == "gif";
+        let images: &[&str] = match from.category {
+            _ if moving => &["jpeg", "png", "webp"],
+            Category::Image | Category::Vector => &["jpeg", "png", "webp", "gif"],
+            _ => &["jpeg", "png"],
+        };
         let mut groups: Vec<(Category, Vec<&'static Format>)> = Vec::new();
         for to in self.targets(from) {
             // A video becoming a GIF is still moving, so GIF sits with video.
@@ -179,7 +184,12 @@ impl Registry {
                 Category::Vector => Category::Image,
                 kind => kind,
             };
-            if moving && kind == Category::Image && !["jpeg", "png", "webp"].contains(&to.id) {
+            let common = match kind {
+                Category::Image => images.contains(&to.id),
+                Category::Document => ["docx", "txt"].contains(&to.id),
+                _ => true,
+            };
+            if !common {
                 continue;
             }
             match groups.iter_mut().find(|(k, _)| *k == kind) {
@@ -202,7 +212,8 @@ impl Registry {
         ];
         groups.sort_by_key(|(kind, _)| {
             let own = *kind == from.category
-                || (from.category == Category::Vector && *kind == Category::Image);
+                || (from.category == Category::Vector && *kind == Category::Image)
+                || (from.category == Category::Pdf && *kind == Category::Document);
             (!own, rank.iter().position(|k| k == kind))
         });
         groups
@@ -221,7 +232,7 @@ impl Registry {
             (_, Category::Vector) => &["png", "jpeg", "pdf"],
             (_, Category::Video) => &["mp4", "mov", "gif", "mp3"],
             (_, Category::Audio) => &["mp3", "m4a", "wav"],
-            (_, Category::Pdf) => &["png", "jpeg", "docx"],
+            (_, Category::Pdf) => &["docx", "txt", "png", "jpeg"],
             (_, Category::Document) => &["pdf", "docx", "txt"],
             (_, Category::Spreadsheet) => &["pdf", "xlsx", "csv"],
             (_, Category::Presentation) => &["pdf", "pptx"],
@@ -553,6 +564,40 @@ mod tests {
         assert_eq!(ids("png"), ["jpeg", "webp"]);
         // No preferred target is reachable: fall back to what is.
         assert_eq!(ids("flac"), ["opus"]);
+    }
+
+    #[test]
+    fn menu_groups_offer_only_common_images_and_documents() {
+        let mut r = Registry::new();
+        r.register(Arc::new(Fake(
+            "pdf",
+            0,
+            vec![("pdf", "png"), ("pdf", "jpeg"), ("pdf", "txt")],
+        )));
+        r.register(Arc::new(Fake(
+            "img",
+            0,
+            vec![
+                ("png", "qoi"),
+                ("png", "gif"),
+                ("png", "webp"),
+                ("png", "tga"),
+            ],
+        )));
+        r.register(Arc::new(Fake(
+            "office",
+            0,
+            vec![("txt", "docx"), ("txt", "odt"), ("txt", "rtf")],
+        )));
+        let ids = |from| {
+            r.menu_groups(f(from))
+                .into_iter()
+                .flat_map(|(_, list)| list.into_iter().map(|t| t.id))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(ids("pdf"), ["docx", "txt", "jpeg", "png"]);
+        assert_eq!(ids("png"), ["gif", "webp"]);
+        assert!(r.targets(f("pdf")).iter().any(|t| t.id == "qoi"));
     }
 
     #[test]
